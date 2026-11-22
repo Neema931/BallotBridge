@@ -44,6 +44,7 @@ $password = isset($_POST['password']) && is_string($_POST['password'])
     : '';
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/audit.php';
 
 $user = false;
 if (
@@ -69,6 +70,22 @@ if (!$credentialsValid || $user['status'] !== 'active') {
     }
 
     $_SESSION['login_throttle'] = $throttle;
+    log_security_event(
+        $pdo,
+        'security.login_failed',
+        'Failed sign-in attempt; credentials were invalid or the account was inactive.',
+        null,
+        ['attempt_number' => $throttle['count']]
+    );
+    if ($throttle['count'] === $maxAttempts) {
+        log_security_event(
+            $pdo,
+            'security.login_throttled',
+            'Sign-in attempts were throttled after repeated invalid credentials.',
+            null,
+            ['lockout_seconds' => $lockoutSeconds]
+        );
+    }
     set_flash('error', 'Invalid email or password, or the account is not active.');
     redirect(BASE_URL . '/auth/login.php');
 }

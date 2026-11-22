@@ -13,6 +13,18 @@ function voter_vote_fail(PDO $pdo, int $electionId, string $message): void
     redirect(BASE_URL . '/voter/vote.php?election_id=' . $electionId);
 }
 
+function voter_vote_position_id($value): int|false
+{
+    if (!is_int($value) && !is_string($value)) {
+        return false;
+    }
+    $positionId = filter_var((string) $value, FILTER_VALIDATE_INT, [
+        'options' => ['min_range' => 1],
+    ]);
+
+    return $positionId === false ? false : (int) $positionId;
+}
+
 if (!is_post()) {
     redirect(BASE_URL . '/voter/dashboard.php');
 }
@@ -26,60 +38,33 @@ if ($rawElectionId === false) {
     set_flash('error', 'Invalid election.');
     redirect(BASE_URL . '/voter/dashboard.php');
 }
-$electionId = (int) $rawElectionId;
-$userId = (int) current_user()['id'];
-$postedVotes = $_POST['votes'] ?? null;
-
-if (!is_array($postedVotes) || $postedVotes === []) {
-    set_flash('error', 'Select a candidate for each available position.');
-    redirect(BASE_URL . '/voter/vote.php?election_id=' . $electionId);
-}
-
-$submittedVotes = [];
-foreach ($postedVotes as $rawPositionId => $rawCandidateId) {
-    if (
-        (!is_int($rawPositionId) && !is_string($rawPositionId))
-        || (!is_string($rawCandidateId) && !is_int($rawCandidateId))
-    ) {
-        set_flash('error', 'Invalid ballot selection.');
-        redirect(BASE_URL . '/voter/vote.php?election_id=' . $electionId);
-    }
-
-    $positionId = filter_var((string) $rawPositionId, FILTER_VALIDATE_INT, [
-        'options' => ['min_range' => 1],
-    ]);
-    $candidateId = filter_var((string) $rawCandidateId, FILTER_VALIDATE_INT, [
-        'options' => ['min_range' => 1],
-    ]);
-
-    if ($positionId === false || $candidateId === false) {
-        set_flash('error', 'Invalid ballot selection.');
-        redirect(BASE_URL . '/voter/vote.php?election_id=' . $electionId);
-    }
-
-    $submittedVotes[(int) $positionId] = (int) $candidateId;
-}
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/election_time.php';
+require_once __DIR__ . '/../includes/election_scheduler.php';
+
+$electionId = (int) $rawElectionId;
+$userId = (int) current_user()['id'];
+activate_due_auto_elections($pdo);
 
 $pdo->beginTransaction();
 
 try {
     $electionQuery = $pdo->prepare(
-        "SELECT id FROM elections
-         WHERE id = :election_id
-           AND status = 'open'
-           AND start_datetime <= NOW()
-           AND end_datetime >= NOW()
-         FOR UPDATE"
+        'SELECT id, start_datetime, end_datetime, timezone, voting_system,
+                verification_methods, allow_abstentions
+         FROM elections
+         WHERE id = :election_id AND status = \'open\'
+         FOR UPDATE'
     );
     $electionQuery->execute(['election_id' => $electionId]);
-    if ($electionQuery->fetchColumn() === false) {
+    $election = $electionQuery->fetch();
+    if (!$election || !election_is_within_schedule($election)) {
         voter_vote_fail($pdo, $electionId, 'This election is not currently accepting votes.');
     }
 
     $voterQuery = $pdo->prepare(
-        "SELECT v.id
+        "SELECT v.id, v.reg_number, u.password_hash
          FROM voters v
          INNER JOIN users u ON u.id = v.user_id
          WHERE u.id = :user_id
@@ -89,92 +74,252 @@ try {
          FOR UPDATE"
     );
     $voterQuery->execute(['user_id' => $userId]);
-    $voterId = $voterQuery->fetchColumn();
-    if ($voterId === false) {
+    $voter = $voterQuery->fetch();
+    if (!$voter) {
         voter_vote_fail($pdo, $electionId, 'Your voter account must be active to cast a vote.');
     }
-    $voterId = (int) $voterId;
+    $voterId = (int) $voter['id'];
+    $verificationMethods = explode(',', $election['verification_methods']);
 
-    $positionQuery = $pdo->prepare(
-        "SELECT p.id, COUNT(c.id) AS approved_candidate_count
-         FROM positions p
-         LEFT JOIN candidates c
-           ON c.position_id = p.id
-          AND c.election_id = p.election_id
-          AND c.status = 'approved'
-         WHERE p.election_id = :election_id
-         GROUP BY p.id"
-    );
-    $positionQuery->execute(['election_id' => $electionId]);
-    $requiredPositions = [];
-    foreach ($positionQuery->fetchAll() as $position) {
-        if ((int) $position['approved_candidate_count'] > 0) {
-            $requiredPositions[(int) $position['id']] = true;
+    if (in_array('email_token', $verificationMethods, true)) {
+        $verificationQuery = $pdo->prepare(
+            'SELECT (verified_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE)) AS recently_verified
+             FROM election_voter_verifications
+             WHERE election_id = :election_id AND voter_id = :voter_id
+             LIMIT 1'
+        );
+        $verificationQuery->execute([
+            'election_id' => $electionId,
+            'voter_id' => $voterId,
+        ]);
+        if (!(bool) $verificationQuery->fetchColumn()) {
+            voter_vote_fail($pdo, $electionId, 'Verify your registered email before submitting this ballot.');
         }
     }
 
-    $existingVotesQuery = $pdo->prepare(
+    if (in_array('voter_pin', $verificationMethods, true)) {
+        $registrationNumber = isset($_POST['voter_reg_number']) && is_string($_POST['voter_reg_number'])
+            ? trim($_POST['voter_reg_number'])
+            : '';
+        $password = isset($_POST['voter_pin']) && is_string($_POST['voter_pin'])
+            ? $_POST['voter_pin']
+            : '';
+        if (
+            $registrationNumber === ''
+            || !hash_equals((string) $voter['reg_number'], $registrationNumber)
+            || !password_verify($password, $voter['password_hash'])
+        ) {
+            voter_vote_fail($pdo, $electionId, 'The voter ID or account password is incorrect.');
+        }
+    }
+
+    $positionsQuery = $pdo->prepare(
+        "SELECT p.id, p.max_votes
+         FROM positions p
+         WHERE p.election_id = :election_id
+           AND EXISTS (
+               SELECT 1 FROM candidates c
+               WHERE c.position_id = p.id
+                 AND c.election_id = p.election_id
+                 AND c.status = 'approved'
+           )
+         ORDER BY p.id
+         FOR UPDATE"
+    );
+    $positionsQuery->execute(['election_id' => $electionId]);
+    $positions = [];
+    foreach ($positionsQuery->fetchAll() as $position) {
+        $positions[(int) $position['id']] = [
+            'max_votes' => (int) $position['max_votes'],
+            'candidates' => [],
+        ];
+    }
+
+    $candidateQuery = $pdo->prepare(
+        "SELECT c.id, c.position_id
+         FROM candidates c
+         INNER JOIN positions p ON p.id = c.position_id AND p.election_id = c.election_id
+         WHERE c.election_id = :election_id AND c.status = 'approved'"
+    );
+    $candidateQuery->execute(['election_id' => $electionId]);
+    foreach ($candidateQuery->fetchAll() as $candidate) {
+        $positions[(int) $candidate['position_id']]['candidates'][(int) $candidate['id']] = true;
+    }
+
+    $existingSubmissionsQuery = $pdo->prepare(
         'SELECT position_id
-         FROM votes
+         FROM ballot_submissions
          WHERE voter_id = :voter_id AND election_id = :election_id
          FOR UPDATE'
     );
-    $existingVotesQuery->execute([
+    $existingSubmissionsQuery->execute([
         'voter_id' => $voterId,
         'election_id' => $electionId,
     ]);
-    $alreadyVoted = [];
-    foreach ($existingVotesQuery->fetchAll(PDO::FETCH_COLUMN) as $positionId) {
-        $alreadyVoted[(int) $positionId] = true;
+    $alreadySubmitted = [];
+    foreach ($existingSubmissionsQuery->fetchAll(PDO::FETCH_COLUMN) as $positionId) {
+        $alreadySubmitted[(int) $positionId] = true;
     }
 
-    foreach ($alreadyVoted as $positionId => $_) {
-        unset($requiredPositions[$positionId]);
-    }
-
+    $requiredPositions = array_diff_key($positions, $alreadySubmitted);
     if ($requiredPositions === []) {
-        voter_vote_fail($pdo, $electionId, 'You have already voted in all available positions.');
-    }
-    if (count($submittedVotes) !== count($requiredPositions)) {
-        voter_vote_fail($pdo, $electionId, 'Select one candidate for each remaining position.');
+        voter_vote_fail($pdo, $electionId, 'You have already submitted all available positions.');
     }
 
-    foreach ($submittedVotes as $positionId => $candidateId) {
-        if (!isset($requiredPositions[$positionId])) {
-            voter_vote_fail($pdo, $electionId, 'A selection is invalid or has already been submitted.');
+    $postedVotes = $_POST['votes'] ?? [];
+    $postedAbstentions = $_POST['abstain'] ?? [];
+    if (!is_array($postedVotes) || !is_array($postedAbstentions)) {
+        voter_vote_fail($pdo, $electionId, 'Invalid ballot data.');
+    }
+
+    $normalizedVotes = [];
+    foreach ($postedVotes as $rawPositionId => $selection) {
+        $positionId = voter_vote_position_id($rawPositionId);
+        if ($positionId === false || !isset($requiredPositions[$positionId])) {
+            voter_vote_fail($pdo, $electionId, 'A ballot selection is invalid or has already been submitted.');
+        }
+        $normalizedVotes[$positionId] = $selection;
+    }
+    $normalizedAbstentions = [];
+    foreach ($postedAbstentions as $rawPositionId => $value) {
+        $positionId = voter_vote_position_id($rawPositionId);
+        if (
+            $positionId === false
+            || !isset($requiredPositions[$positionId])
+            || $value !== '1'
+        ) {
+            voter_vote_fail($pdo, $electionId, 'An abstention selection is invalid.');
+        }
+        $normalizedAbstentions[$positionId] = true;
+    }
+    if (count($normalizedVotes) + count($normalizedAbstentions) < count($requiredPositions)) {
+        voter_vote_fail($pdo, $electionId, 'Complete each remaining position or select an allowed abstention.');
+    }
+
+    $votesToInsert = [];
+    foreach ($requiredPositions as $positionId => $position) {
+        $isAbstention = isset($normalizedAbstentions[$positionId]);
+        $selection = $normalizedVotes[$positionId] ?? null;
+        if ($election['voting_system'] === 'fptp' && $selection === 'abstain') {
+            $isAbstention = true;
+        }
+        if ($isAbstention && !(bool) $election['allow_abstentions']) {
+            voter_vote_fail($pdo, $electionId, 'Abstentions are not allowed in this election.');
         }
 
-        $candidateQuery = $pdo->prepare(
-            "SELECT c.id
-             FROM candidates c
-             INNER JOIN positions p
-               ON p.id = c.position_id AND p.election_id = c.election_id
-             WHERE c.id = :candidate_id
-               AND c.position_id = :position_id
-               AND c.election_id = :election_id
-               AND c.status = 'approved'
-             LIMIT 1"
-        );
-        $candidateQuery->execute([
-            'candidate_id' => $candidateId,
-            'position_id' => $positionId,
-            'election_id' => $electionId,
-        ]);
-        if ($candidateQuery->fetchColumn() === false) {
-            voter_vote_fail($pdo, $electionId, 'A selected candidate does not belong to that position.');
+        if ($election['voting_system'] === 'fptp') {
+            if ($isAbstention && $selection !== null && $selection !== 'abstain') {
+                voter_vote_fail($pdo, $electionId, 'Choose either a candidate or abstain for each position.');
+            }
+            if (!$isAbstention) {
+                $candidateId = is_string($selection) || is_int($selection)
+                    ? filter_var((string) $selection, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]])
+                    : false;
+                if ($candidateId === false || !isset($position['candidates'][(int) $candidateId])) {
+                    voter_vote_fail($pdo, $electionId, 'Select one approved candidate for each position.');
+                }
+                $votesToInsert[$positionId] = [[(int) $candidateId, null]];
+            }
+        } elseif ($election['voting_system'] === 'multiple_selection') {
+            if ($isAbstention && $selection !== null) {
+                voter_vote_fail($pdo, $electionId, 'Choose either candidates or abstain for each position.');
+            }
+            if ($isAbstention) {
+                continue;
+            }
+            if (!is_array($selection) || $selection === []) {
+                voter_vote_fail($pdo, $electionId, 'Select at least one approved candidate or abstain.');
+            }
+            $selectedCandidates = [];
+            foreach ($selection as $rawCandidateId) {
+                $candidateId = (is_string($rawCandidateId) || is_int($rawCandidateId))
+                    ? filter_var((string) $rawCandidateId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]])
+                    : false;
+                if (
+                    $candidateId === false
+                    || !isset($position['candidates'][(int) $candidateId])
+                    || isset($selectedCandidates[(int) $candidateId])
+                ) {
+                    voter_vote_fail($pdo, $electionId, 'A selected candidate is invalid or duplicated.');
+                }
+                $selectedCandidates[(int) $candidateId] = true;
+            }
+            if (count($selectedCandidates) > $position['max_votes']) {
+                voter_vote_fail($pdo, $electionId, 'You selected more candidates than this position allows.');
+            }
+            $votesToInsert[$positionId] = array_map(
+                static fn (int $candidateId): array => [$candidateId, null],
+                array_keys($selectedCandidates)
+            );
+        } else {
+            if ($isAbstention && $selection !== null) {
+                voter_vote_fail($pdo, $electionId, 'Choose either candidate rankings or abstain for each position.');
+            }
+            if ($isAbstention) {
+                continue;
+            }
+            if (!is_array($selection) || $selection === []) {
+                voter_vote_fail($pdo, $electionId, 'Rank at least one approved candidate or abstain.');
+            }
+            $rankedCandidates = [];
+            $usedRanks = [];
+            foreach ($selection as $rawCandidateId => $rawRank) {
+                $candidateId = voter_vote_position_id($rawCandidateId);
+                $rank = (is_string($rawRank) || is_int($rawRank))
+                    ? filter_var((string) $rawRank, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]])
+                    : false;
+                if (
+                    $candidateId === false
+                    || !isset($position['candidates'][$candidateId])
+                    || $rank === false
+                    || $rank > count($position['candidates'])
+                ) {
+                    voter_vote_fail($pdo, $electionId, 'A ranked-choice selection is invalid.');
+                }
+                if ($rank > 0) {
+                    if (isset($usedRanks[$rank])) {
+                        voter_vote_fail($pdo, $electionId, 'Each ranked-choice rank can only be used once.');
+                    }
+                    $usedRanks[$rank] = true;
+                    $rankedCandidates[] = [$candidateId, (int) $rank];
+                }
+            }
+            if ($rankedCandidates === []) {
+                voter_vote_fail($pdo, $electionId, 'Rank at least one candidate or abstain.');
+            }
+            $votesToInsert[$positionId] = $rankedCandidates;
         }
+
     }
 
     $insertVote = $pdo->prepare(
-        'INSERT INTO votes (election_id, position_id, candidate_id, voter_id)
-         VALUES (:election_id, :position_id, :candidate_id, :voter_id)'
+        'INSERT INTO votes (election_id, position_id, candidate_id, voter_id, rank)
+         VALUES (:election_id, :position_id, :candidate_id, :voter_id, :rank)'
     );
-    foreach ($submittedVotes as $positionId => $candidateId) {
-        $insertVote->execute([
+    $insertSubmission = $pdo->prepare(
+        'INSERT INTO ballot_submissions (election_id, position_id, voter_id, abstained)
+         VALUES (:election_id, :position_id, :voter_id, :abstained)'
+    );
+    foreach ($requiredPositions as $positionId => $_position) {
+        $abstained = isset($normalizedAbstentions[$positionId])
+            || (
+                $election['voting_system'] === 'fptp'
+                && ($normalizedVotes[$positionId] ?? null) === 'abstain'
+            );
+        foreach ($votesToInsert[$positionId] ?? [] as [$candidateId, $rank]) {
+            $insertVote->execute([
+                'election_id' => $electionId,
+                'position_id' => $positionId,
+                'candidate_id' => $candidateId,
+                'voter_id' => $voterId,
+                'rank' => $rank,
+            ]);
+        }
+        $insertSubmission->execute([
             'election_id' => $electionId,
             'position_id' => $positionId,
-            'candidate_id' => $candidateId,
             'voter_id' => $voterId,
+            'abstained' => $abstained ? 1 : 0,
         ]);
     }
 
@@ -184,17 +329,21 @@ try {
         $pdo->rollBack();
     }
 
-    $isDuplicateVote = $exception->getCode() === '23000'
+    $isDuplicateSubmission = $exception->getCode() === '23000'
         && isset($exception->errorInfo[1])
         && (int) $exception->errorInfo[1] === 1062;
-
-    if ($isDuplicateVote) {
-        set_flash('error', 'A vote for one or more positions was already recorded. Refresh your ballot.');
+    if ($isDuplicateSubmission) {
+        set_flash('error', 'A ballot for one or more positions was already recorded. Refresh your ballot.');
         redirect(BASE_URL . '/voter/vote.php?election_id=' . $electionId);
     }
 
     throw $exception;
+} catch (Throwable $exception) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    throw $exception;
 }
 
-set_flash('success', 'Your vote has been recorded.');
+set_flash('success', 'Your ballot has been recorded.');
 redirect(BASE_URL . '/voter/my_vote.php');

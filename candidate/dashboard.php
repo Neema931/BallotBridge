@@ -3,6 +3,9 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_role('candidate');
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/election_scheduler.php';
+
+activate_due_auto_elections($pdo);
 
 $userId = (int) current_user()['id'];
 $profileQuery = $pdo->prepare(

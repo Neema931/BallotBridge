@@ -3,6 +3,11 @@
 require_once __DIR__ . '/../includes/auth.php';
 require_role('voter');
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/election_time.php';
+require_once __DIR__ . '/../includes/election_scheduler.php';
+require_once __DIR__ . '/../includes/rich_text.php';
+
+activate_due_auto_elections($pdo);
 
 $userId = (int) current_user()['id'];
 $voterQuery = $pdo->prepare(
@@ -20,18 +25,30 @@ if (!$voter) {
 }
 
 $electionsQuery = $pdo->prepare(
-    'SELECT e.id, e.title, e.description, e.start_datetime, e.end_datetime,
-            (NOW() BETWEEN e.start_datetime AND e.end_datetime) AS voting_available,
-            EXISTS (
-                SELECT 1 FROM votes v
-                WHERE v.election_id = e.id AND v.voter_id = :voter_id
-            ) AS has_voted
+    "SELECT e.id, e.title, e.description, e.start_datetime, e.end_datetime, e.timezone,
+            (SELECT COUNT(*) FROM ballot_submissions bs
+             WHERE bs.election_id = e.id AND bs.voter_id = :submitted_voter_id) AS submitted_positions,
+            (SELECT COUNT(*)
+             FROM positions p
+             WHERE p.election_id = e.id
+               AND EXISTS (
+                   SELECT 1 FROM candidates c
+                   WHERE c.position_id = p.id AND c.election_id = e.id AND c.status = 'approved'
+               )) AS available_positions
      FROM elections e
-     WHERE e.status = \'open\'
-     ORDER BY e.start_datetime, e.title'
+     WHERE e.status = 'open'
+     ORDER BY e.start_datetime, e.title"
 );
-$electionsQuery->execute(['voter_id' => $voter['id']]);
+$electionsQuery->execute([
+    'submitted_voter_id' => $voter['id'],
+]);
 $elections = $electionsQuery->fetchAll();
+foreach ($elections as &$election) {
+    $election['voting_available'] = election_is_within_schedule($election);
+    $election['is_complete'] = (int) $election['available_positions'] > 0
+        && (int) $election['submitted_positions'] >= (int) $election['available_positions'];
+}
+unset($election);
 
 $pageTitle = 'Voter dashboard';
 require_once __DIR__ . '/../includes/header.php';
@@ -65,35 +82,52 @@ require_once __DIR__ . '/../includes/header.php';
             <?php else: ?>
                 <div class="grid grid--2">
                     <?php foreach ($elections as $election): ?>
-                        <?php $canVote = $voter['status'] === 'active' && (bool) $election['voting_available']; ?>
+                        <?php
+                        $canVote = $voter['status'] === 'active'
+                            && $election['voting_available']
+                            && !$election['is_complete']
+                            && (int) $election['available_positions'] > 0;
+                        ?>
                         <article class="card voter-election-card">
                             <h3><?= sanitize($election['title']) ?></h3>
                             <?php if ($election['description'] !== null && $election['description'] !== ''): ?>
-                                <p><?= nl2br(sanitize($election['description'])) ?></p>
+                                <div class="rich-text-content">
+                                    <?= sanitize_rich_text($election['description']) ?>
+                                </div>
                             <?php endif; ?>
                             <p>
                                 Voting window:
-                                <?= sanitize($election['start_datetime']) ?> to
-                                <?= sanitize($election['end_datetime']) ?>
+                                <?= sanitize(format_election_local_time($election['start_datetime'], $election['timezone'])) ?>
+                                to <?= sanitize(format_election_local_time($election['end_datetime'], $election['timezone'])) ?>
+                                (<?= sanitize($election['timezone']) ?>)
                             </p>
                             <p>
-                                Your status:
-                                <?php if ((bool) $election['has_voted']): ?>
-                                    <span class="badge badge--success">Already voted</span>
+                                Your progress:
+                                <?php if ($election['is_complete']): ?>
+                                    <span class="badge badge--success">Ballot complete</span>
+                                <?php elseif ((int) $election['submitted_positions'] > 0): ?>
+                                    <span class="badge badge--pending">
+                                        <?= (int) $election['submitted_positions'] ?> of
+                                        <?= (int) $election['available_positions'] ?> positions submitted
+                                    </span>
                                 <?php else: ?>
-                                    <span class="badge badge--pending">Not voted yet</span>
+                                    <span class="badge badge--pending">Not started</span>
                                 <?php endif; ?>
                             </p>
                             <?php if ($canVote): ?>
                                 <a class="btn btn--primary"
                                     href="<?= BASE_URL ?>/voter/vote.php?election_id=<?= (int) $election['id'] ?>">
-                                    <?= (bool) $election['has_voted'] ? 'Continue voting' : 'View ballot' ?>
+                                    <?= (int) $election['submitted_positions'] > 0 ? 'Continue voting' : 'View ballot' ?>
                                 </a>
+                            <?php elseif ($election['is_complete']): ?>
+                                <p>Your ballot is complete. You can view the receipt on your voting receipts page.</p>
                             <?php else: ?>
                                 <p>
                                     <?= $voter['status'] !== 'active'
                                         ? 'Voting is unavailable until your account is activated.'
-                                        : 'Voting is outside the scheduled date range.' ?>
+                                        : (!$election['voting_available']
+                                            ? 'Voting is outside the scheduled date range.'
+                                            : 'No positions with approved candidates are available yet.') ?>
                                 </p>
                             <?php endif; ?>
                         </article>

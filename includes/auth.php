@@ -45,4 +45,21 @@ function require_role(string $role): void
         set_flash('error', 'You do not have permission to access that page.');
         redirect(BASE_URL . '/index.php');
     }
+
+    if ($role === 'voter') {
+        global $pdo;
+        require_once __DIR__ . '/../config/database.php';
+
+        $trackSession = $pdo->prepare(
+            'INSERT INTO active_voter_sessions (session_hash, user_id, last_seen_at)
+             VALUES (:session_hash, :user_id, CURRENT_TIMESTAMP)
+             ON DUPLICATE KEY UPDATE
+                user_id = VALUES(user_id),
+                last_seen_at = CURRENT_TIMESTAMP'
+        );
+        $trackSession->execute([
+            'session_hash' => hash('sha256', session_id()),
+            'user_id' => (int) $_SESSION['user']['id'],
+        ]);
+    }
 }

@@ -8,6 +8,19 @@ if (!is_post()) {
 
 verify_csrf();
 
+if (
+    isset($_SESSION['user'])
+    && is_array($_SESSION['user'])
+    && ($_SESSION['user']['role'] ?? null) === 'voter'
+    && isset($_SESSION['user']['id'])
+) {
+    require_once __DIR__ . '/../config/database.php';
+    $removeVoterSession = $pdo->prepare(
+        'DELETE FROM active_voter_sessions WHERE session_hash = :session_hash'
+    );
+    $removeVoterSession->execute(['session_hash' => hash('sha256', session_id())]);
+}
+
 $_SESSION = [];
 
 if (ini_get('session.use_cookies')) {

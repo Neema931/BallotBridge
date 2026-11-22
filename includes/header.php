@@ -28,11 +28,14 @@ $navigationLinks = $loggedInUser === null
     ? []
     : ($roleLinks[$loggedInUser['role'] ?? ''] ?? []);
 $isAdmin = ($loggedInUser['role'] ?? null) === 'admin';
+$isVoter = ($loggedInUser['role'] ?? null) === 'voter';
 $adminNavigationLinks = [
     ['label' => 'Dashboard', 'href' => '/admin/dashboard.php'],
+    ['label' => 'Manage elections', 'href' => '/admin/manage_elections.php'],
     ['label' => 'Manage voters', 'href' => '/admin/manage_voters.php'],
     ['label' => 'Manage candidates', 'href' => '/admin/manage_candidates.php'],
     ['label' => 'See results', 'href' => '/admin/results.php'],
+    ['label' => 'Audit logs', 'href' => '/admin/audit_logs.php'],
     ['label' => 'Settings', 'href' => '/admin/settings.php'],
 ];
 $currentPage = basename($_SERVER['SCRIPT_NAME'] ?? '');
@@ -58,6 +61,9 @@ foreach ($flashMessages as $flash) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#0000ff">
+    <?php if ($isVoter): ?>
+        <meta name="csrf-token" content="<?= sanitize(csrf_token()) ?>">
+    <?php endif; ?>
     <title><?= sanitize($pageTitle) ?> | <?= sanitize(APP_NAME) ?></title>
     <link rel="icon" href="<?= BASE_URL ?>/assets/img/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/variables.css">
@@ -65,10 +71,11 @@ foreach ($flashMessages as $flash) {
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/layout.css">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/components.css">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/forms.css">
-    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/dashboard.css?v=3">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/dashboard.css?v=13">
 </head>
 <body class="site-body<?= $isAdmin ? ' site-body--admin' : '' ?>"
-    <?= $isAdmin ? 'data-theme-scope="admin" data-theme="light"' : '' ?>>
+    <?= $isAdmin ? 'data-theme-scope="admin" data-theme="light"' : '' ?>
+    <?= $isVoter ? 'data-voter-heartbeat="' . BASE_URL . '/voter/session_heartbeat.php"' : '' ?>>
     <a class="skip-link" href="#main-content">Skip to content</a>
     <?php if ($isAdmin): ?>
         <header class="admin-sidebar">

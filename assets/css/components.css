@@ -205,7 +205,9 @@
 .badge--info,
 .badge--open,
 .badge--approved,
-.badge--active {
+.badge--active,
+.badge--live,
+.badge--scheduled {
     background: var(--blue);
     color: var(--white);
 }
@@ -220,7 +222,8 @@
 .badge--error,
 .badge--rejected,
 .badge--suspended,
-.badge--closed {
+.badge--closed,
+.badge--paused {
     background: var(--black);
     color: var(--white);
 }

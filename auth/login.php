@@ -34,12 +34,12 @@ require_once __DIR__ . '/../includes/header.php';
                         <button class="password-toggle" type="button" aria-controls="password"
                             aria-label="Show password" aria-pressed="false" data-password-toggle>
                             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-                                data-password-toggle-show>
+                                data-password-toggle-show hidden>
                                 <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/>
                                 <circle cx="12" cy="12" r="3"/>
                             </svg>
                             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-                                data-password-toggle-hide hidden>
+                                data-password-toggle-hide>
                                 <path d="M3 3 21 21M10.6 5.2A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a15 15 0 0 1-3.1 3.8M6.2 6.2C3.5 8.1 2 12 2 12s3.6 7 10 7a10.7 10.7 0 0 0 3-.4"/>
                                 <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
                             </svg>
