@@ -11,9 +11,19 @@ verify_csrf();
 $candidatePortal = isset($_POST['portal'])
     && is_string($_POST['portal'])
     && $_POST['portal'] === 'candidate';
+$voterPortal = isset($_POST['portal'])
+    && is_string($_POST['portal'])
+    && $_POST['portal'] === 'voter';
 $loginUrl = $candidatePortal
     ? BASE_URL . '/candidate/login.php'
-    : BASE_URL . '/auth/login.php';
+    : ($voterPortal ? BASE_URL . '/voter/login.php' : BASE_URL . '/auth/login.php');
+
+if ($voterPortal && isset($_SESSION['flash']) && is_array($_SESSION['flash'])) {
+    unset($_SESSION['flash']['voter_login_notice']);
+    if ($_SESSION['flash'] === []) {
+        unset($_SESSION['flash']);
+    }
+}
 
 $now = time();
 $maxAttempts = 5;
@@ -43,11 +53,11 @@ if ($windowStartedAt <= 0 || $now - $windowStartedAt >= $windowSeconds || $locke
     ];
 }
 
-$identifierField = $candidatePortal ? 'identifier' : 'email';
+$identifierField = $candidatePortal || $voterPortal ? 'identifier' : 'email';
 $identifier = isset($_POST[$identifierField]) && is_string($_POST[$identifierField])
     ? trim($_POST[$identifierField])
     : '';
-if (!$candidatePortal) {
+if (!$candidatePortal && filter_var($identifier, FILTER_VALIDATE_EMAIL) !== false) {
     $identifier = strtolower($identifier);
 }
 $password = isset($_POST['password']) && is_string($_POST['password'])
@@ -74,13 +84,39 @@ if ($candidatePortal && $identifier !== '' && strlen($identifier) <= 254
     $matchingUsers = $userQuery->fetchAll();
     $user = count($matchingUsers) === 1 ? $matchingUsers[0] : false;
 } elseif (
+    $voterPortal
+    && $identifier !== ''
+    && strlen($identifier) <= 254
+    && $password !== ''
+    && strlen($password) <= 72
+) {
+    $userQuery = $pdo->prepare(
+        "SELECT u.id, u.password_hash, u.role, u.status, v.id AS voter_profile_id
+         FROM users u
+         INNER JOIN voters v ON v.user_id = u.id
+         WHERE (u.email = :email OR v.reg_number = :reg_number)
+           AND u.role = 'voter'
+         LIMIT 2"
+    );
+    $userQuery->execute([
+        'email' => $identifier,
+        'reg_number' => $identifier,
+    ]);
+    $matchingUsers = $userQuery->fetchAll();
+    $user = count($matchingUsers) === 1 ? $matchingUsers[0] : false;
+} elseif (
     !$candidatePortal
+    && !$voterPortal
     && filter_var($identifier, FILTER_VALIDATE_EMAIL) !== false
     && $password !== ''
     && strlen($password) <= 72
 ) {
     $userQuery = $pdo->prepare(
-        'SELECT id, password_hash, role, status FROM users WHERE email = :email LIMIT 1'
+        'SELECT u.id, u.password_hash, u.role, u.status, v.id AS voter_profile_id
+         FROM users u
+         LEFT JOIN voters v ON v.user_id = u.id
+         WHERE u.email = :email
+         LIMIT 1'
     );
     $userQuery->execute(['email' => $identifier]);
     $user = $userQuery->fetch();
@@ -88,7 +124,19 @@ if ($candidatePortal && $identifier !== '' && strlen($identifier) <= 254
 
 $credentialsValid = is_array($user)
     && (!$candidatePortal || $user['role'] === 'candidate')
+    && (!$voterPortal || $user['role'] === 'voter')
+    && ($user['role'] !== 'voter' || isset($user['voter_profile_id']))
     && password_verify($password, $user['password_hash']);
+
+if (
+    $credentialsValid
+    && $voterPortal
+    && in_array($user['status'], ['pending', 'rejected'], true)
+) {
+    unset($_SESSION['login_throttle']);
+    set_flash('voter_login_notice', $user['status']);
+    redirect($loginUrl);
+}
 
 if (!$credentialsValid || $user['status'] !== 'active') {
     $throttle['count'] = (int) ($throttle['count'] ?? 0) + 1;
@@ -118,7 +166,9 @@ if (!$credentialsValid || $user['status'] !== 'active') {
         'error',
         $candidatePortal
             ? 'Invalid email or candidate ID, or the account is not active.'
-            : 'Invalid email or password, or the account is not active.'
+            : ($voterPortal
+                ? 'Invalid email, voter ID, or password.'
+                : 'Invalid email or password, or the account is not active.')
     );
     redirect($loginUrl);
 }
@@ -133,7 +183,7 @@ if (!isset($roleDestinations[$user['role']])) {
     throw new UnexpectedValueException('The account has an unsupported role.');
 }
 
-$rememberMe = $candidatePortal
+$rememberMe = ($candidatePortal || $voterPortal)
     && isset($_POST['remember_me'])
     && is_string($_POST['remember_me'])
     && $_POST['remember_me'] === '1';
@@ -156,9 +206,11 @@ $_SESSION['user'] = [
     'id' => (int) $user['id'],
     'role' => $user['role'],
 ];
-unset($_SESSION['candidate_id']);
+unset($_SESSION['candidate_id'], $_SESSION['voter_id']);
 if ($user['role'] === 'candidate') {
     $_SESSION['candidate_id'] = (int) $user['id'];
+} elseif ($user['role'] === 'voter') {
+    $_SESSION['voter_id'] = (int) $user['voter_profile_id'];
 }
 if ($rememberMe) {
     $_SESSION['remember_me'] = true;

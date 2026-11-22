@@ -292,13 +292,25 @@ try {
 
     }
 
+    $receiptHash = hash('sha256', random_bytes(32));
+    $insertReceipt = $pdo->prepare(
+        'INSERT INTO ballot_receipts (receipt_hash, election_id, position_count)
+         VALUES (:receipt_hash, :election_id, :position_count)'
+    );
+    $insertReceipt->execute([
+        'receipt_hash' => $receiptHash,
+        'election_id' => $electionId,
+        'position_count' => count($requiredPositions),
+    ]);
+
     $insertVote = $pdo->prepare(
         'INSERT INTO votes (election_id, position_id, candidate_id, voter_id, rank)
          VALUES (:election_id, :position_id, :candidate_id, :voter_id, :rank)'
     );
     $insertSubmission = $pdo->prepare(
-        'INSERT INTO ballot_submissions (election_id, position_id, voter_id, abstained)
-         VALUES (:election_id, :position_id, :voter_id, :abstained)'
+        'INSERT INTO ballot_submissions
+            (election_id, position_id, voter_id, abstained, receipt_hash)
+         VALUES (:election_id, :position_id, :voter_id, :abstained, :receipt_hash)'
     );
     foreach ($requiredPositions as $positionId => $_position) {
         $abstained = isset($normalizedAbstentions[$positionId])
@@ -320,6 +332,7 @@ try {
             'position_id' => $positionId,
             'voter_id' => $voterId,
             'abstained' => $abstained ? 1 : 0,
+            'receipt_hash' => $receiptHash,
         ]);
     }
 

@@ -196,15 +196,31 @@ CREATE TABLE votes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Ballots cast by registered voters; retained while referenced.';
 
+CREATE TABLE ballot_receipts (
+    receipt_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    election_id INT UNSIGNED NOT NULL,
+    position_count INT UNSIGNED NOT NULL,
+    cast_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (receipt_hash),
+    UNIQUE KEY uq_ballot_receipts_election_hash (election_id, receipt_hash),
+    KEY idx_ballot_receipts_election_cast_at (election_id, cast_at),
+    CONSTRAINT fk_ballot_receipts_election
+        FOREIGN KEY (election_id) REFERENCES elections (id)
+        ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Opaque participation receipt hashes and issue times; no voter identity or selections.';
+
 CREATE TABLE ballot_submissions (
     election_id INT UNSIGNED NOT NULL,
     position_id INT UNSIGNED NOT NULL,
     voter_id INT UNSIGNED NOT NULL,
     abstained TINYINT(1) NOT NULL DEFAULT 0,
     submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    receipt_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
     PRIMARY KEY (election_id, position_id, voter_id),
     KEY idx_ballot_submissions_election_submitted (election_id, submitted_at),
     KEY idx_ballot_submissions_voter (voter_id, election_id),
+    KEY idx_ballot_submissions_receipt (election_id, receipt_hash),
     CONSTRAINT fk_ballot_submissions_election
         FOREIGN KEY (election_id) REFERENCES elections (id)
         ON DELETE RESTRICT,
@@ -213,6 +229,10 @@ CREATE TABLE ballot_submissions (
         ON DELETE RESTRICT,
     CONSTRAINT fk_ballot_submissions_voter
         FOREIGN KEY (voter_id) REFERENCES voters (id)
+        ON DELETE RESTRICT,
+    CONSTRAINT fk_ballot_submissions_receipt
+        FOREIGN KEY (election_id, receipt_hash)
+        REFERENCES ballot_receipts (election_id, receipt_hash)
         ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Completed per-position ballot submissions, including abstentions.';

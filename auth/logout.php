@@ -65,4 +65,8 @@ if ($loggedOutRole === 'candidate') {
     redirect(BASE_URL . '/candidate/login.php?logged_out=1');
 }
 
+if ($loggedOutRole === 'voter') {
+    redirect(BASE_URL . '/voter/login.php?logged_out=1');
+}
+
 redirect(BASE_URL . '/auth/login.php');

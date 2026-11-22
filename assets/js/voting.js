@@ -1,4 +1,58 @@
 document.addEventListener("DOMContentLoaded", () => {
+    const countdown = document.querySelector("[data-poll-countdown]");
+    if (countdown) {
+        const targetSeconds = Number(countdown.dataset.countdownAt);
+        if (Number.isFinite(targetSeconds) && targetSeconds > 0) {
+            const renderCountdown = () => {
+                const remainingSeconds = Math.max(0, targetSeconds - Math.floor(Date.now() / 1000));
+                const days = Math.floor(remainingSeconds / 86400);
+                const hours = Math.floor((remainingSeconds % 86400) / 3600);
+                const minutes = Math.floor((remainingSeconds % 3600) / 60);
+                const seconds = remainingSeconds % 60;
+                const parts = [];
+
+                if (days > 0) {
+                    parts.push(`${days}d`);
+                }
+                parts.push(`${String(hours).padStart(2, "0")}h`);
+                parts.push(`${String(minutes).padStart(2, "0")}m`);
+                parts.push(`${String(seconds).padStart(2, "0")}s`);
+                countdown.textContent = parts.join(" ");
+            };
+
+            renderCountdown();
+            window.setInterval(renderCountdown, 1000);
+        }
+    }
+
+    document.addEventListener("click", (event) => {
+        if (!(event.target instanceof Element)) {
+            return;
+        }
+
+        const trigger = event.target.closest("[data-open-manifesto]");
+        if (trigger instanceof HTMLButtonElement) {
+            const dialog = document.getElementById(trigger.dataset.openManifesto);
+            if (dialog instanceof HTMLDialogElement) {
+                dialog.showModal();
+            }
+            return;
+        }
+
+        const closeButton = event.target.closest("[data-close-manifesto]");
+        if (closeButton instanceof HTMLButtonElement) {
+            const dialog = closeButton.closest("dialog");
+            if (dialog instanceof HTMLDialogElement) {
+                dialog.close();
+            }
+            return;
+        }
+
+        if (event.target instanceof HTMLDialogElement && event.target.open) {
+            event.target.close();
+        }
+    });
+
     const form = document.querySelector("[data-ballot-form]");
     if (!(form instanceof HTMLFormElement)) {
         return;
@@ -125,6 +179,12 @@ document.addEventListener("DOMContentLoaded", () => {
         summary.replaceChildren();
         for (const position of positions) {
             if (!position.querySelector("[data-ballot-choice]")) {
+                if (position.dataset.submittedPosition === "true") {
+                    const item = document.createElement("li");
+                    const title = position.querySelector("h2")?.textContent.trim() || "Position";
+                    item.textContent = `${title} — Already submitted`;
+                    summary.appendChild(item);
+                }
                 continue;
             }
             const selection = getPositionSelection(position);

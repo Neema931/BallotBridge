@@ -70,8 +70,8 @@ foreach ($flashMessages as $flash) {
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/base.css">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/layout.css">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/components.css">
-    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/forms.css">
-    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/dashboard.css?v=20">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/forms.css?v=1">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/dashboard.css?v=24">
     <?php if (!empty($candidateDashboardStylesheet)): ?>
         <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/candidate-dashboard.css?v=1">
     <?php endif; ?>

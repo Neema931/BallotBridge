@@ -46,6 +46,13 @@ document.querySelectorAll("[data-password-toggle]").forEach((toggle) => {
 if (document.body.dataset.voterHeartbeat) {
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content");
     const heartbeatUrl = document.body.dataset.voterHeartbeat;
+    const sessionIndicator = document.querySelector("[data-session-indicator]");
+    const setSessionIndicator = (state, message) => {
+        if (sessionIndicator) {
+            sessionIndicator.dataset.state = state;
+            sessionIndicator.textContent = message;
+        }
+    };
 
     if (csrfToken) {
         const sendVoterHeartbeat = async () => {
@@ -58,9 +65,13 @@ if (document.body.dataset.voterHeartbeat) {
                     body: new URLSearchParams({ csrf_token: csrfToken }),
                 });
                 if (response.status !== 204) {
+                    setSessionIndicator("reconnecting", "Session connection issue");
                     console.error("Voter activity heartbeat was not accepted.", response.status);
+                    return;
                 }
+                setSessionIndicator("protected", "Session Protected");
             } catch (error) {
+                setSessionIndicator("reconnecting", "Session connection issue");
                 console.error("Unable to update voter activity.", error);
             }
         };
@@ -68,6 +79,7 @@ if (document.body.dataset.voterHeartbeat) {
         sendVoterHeartbeat();
         window.setInterval(sendVoterHeartbeat, 60_000);
     } else {
+        setSessionIndicator("unavailable", "Session protection unavailable");
         console.error("Voter activity heartbeat is missing its CSRF token.");
     }
 }

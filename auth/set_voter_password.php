@@ -86,7 +86,7 @@ if (is_post()) {
                 );
                 $pdo->commit();
                 set_flash('success', 'Your password has been set. Sign in after your registration is approved.');
-                redirect(BASE_URL . '/auth/login.php');
+                redirect(BASE_URL . '/voter/login.php');
             }
         }
     }

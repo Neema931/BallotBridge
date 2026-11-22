@@ -431,7 +431,12 @@ if (is_post()) {
         );
         $submissionCountQuery->execute(['election_id' => $electionId]);
         $submissionCount = (int) $submissionCountQuery->fetchColumn();
-        if ($voteCount === 0 && $submissionCount === 0) {
+        $receiptCountQuery = $pdo->prepare(
+            'SELECT COUNT(*) FROM ballot_receipts WHERE election_id = :election_id'
+        );
+        $receiptCountQuery->execute(['election_id' => $electionId]);
+        $receiptCount = (int) $receiptCountQuery->fetchColumn();
+        if ($voteCount === 0 && $submissionCount === 0 && $receiptCount === 0) {
             $pdo->rollBack();
             set_flash('info', 'This draft election has no test ballots to reset.');
             election_settings_redirect($electionId);
@@ -443,14 +448,23 @@ if (is_post()) {
             'DELETE FROM ballot_submissions WHERE election_id = :election_id'
         );
         $deleteSubmissions->execute(['election_id' => $electionId]);
+        $deleteReceipts = $pdo->prepare(
+            'DELETE FROM ballot_receipts WHERE election_id = :election_id'
+        );
+        $deleteReceipts->execute(['election_id' => $electionId]);
         log_admin_action(
             $pdo,
             'election.test_votes_reset',
             'election',
             $electionId,
-            'Reset ' . $voteCount . ' test votes and ' . $submissionCount . ' ballot submissions.',
-            ['votes' => $voteCount, 'ballot_submissions' => $submissionCount],
-            ['votes' => 0, 'ballot_submissions' => 0]
+            'Reset ' . $voteCount . ' test votes, ' . $submissionCount
+                . ' ballot submissions, and ' . $receiptCount . ' participation receipts.',
+            [
+                'votes' => $voteCount,
+                'ballot_submissions' => $submissionCount,
+                'ballot_receipts' => $receiptCount,
+            ],
+            ['votes' => 0, 'ballot_submissions' => 0, 'ballot_receipts' => 0]
         );
         $pdo->commit();
         set_flash('success', 'Draft test votes and ballot submissions were reset.');

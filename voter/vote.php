@@ -31,17 +31,18 @@ $rawElectionId = isset($_GET['election_id']) && is_string($_GET['election_id'])
 $election = false;
 if ($rawElectionId !== false) {
     $electionQuery = $pdo->prepare(
-        "SELECT id, title, description, support_email, start_datetime, end_datetime, timezone,
+        "SELECT id, title, status, description, support_email, start_datetime, end_datetime, timezone,
                 voting_system, verification_methods, allow_abstentions,
                 organization_logo_path
          FROM elections
-         WHERE id = :election_id AND status = 'open'
+         WHERE id = :election_id AND status IN ('open', 'paused', 'closed')
          LIMIT 1"
     );
     $electionQuery->execute(['election_id' => $rawElectionId]);
     $election = $electionQuery->fetch();
     if ($election) {
-        $election['voting_available'] = election_is_within_schedule($election);
+        $election['voting_available'] = $election['status'] === 'open'
+            && election_is_within_schedule($election);
     }
 }
 
@@ -118,11 +119,36 @@ foreach ($positions as $position) {
         $availablePositionCount++;
     }
 }
+if ($election && $alreadyVoted !== [] && $availablePositionCount === 0) {
+    redirect(BASE_URL . '/voter/my_vote.php');
+}
+
 $showBallot = $election
     && (bool) $election['voting_available']
     && $voter['status'] === 'active'
     && $availablePositionCount > 0
     && (!$emailVerificationRequired || $emailVerified);
+$pollCountdownTarget = null;
+$pollCountdownLabel = '';
+if ($election && $election['voting_available']) {
+    $pollCountdownTarget = parse_stored_election_time(
+        $election['end_datetime'],
+        $election['timezone']
+    );
+    $pollCountdownLabel = 'Polls close in';
+} elseif ($election && $election['status'] === 'open' && election_is_upcoming($election)) {
+    $pollCountdownTarget = parse_stored_election_time(
+        $election['start_datetime'],
+        $election['timezone']
+    );
+    $pollCountdownLabel = 'Polls open in';
+} elseif ($election && $election['status'] === 'paused') {
+    $pollCountdownTarget = parse_stored_election_time(
+        $election['end_datetime'],
+        $election['timezone']
+    );
+    $pollCountdownLabel = 'Scheduled close';
+}
 $electionStart = $election
     ? format_election_local_time($election['start_datetime'], $election['timezone'])
     : '';
@@ -134,18 +160,48 @@ $pageTitle = 'Cast your vote';
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
-<section class="section">
+<section class="section voting-booth">
     <div class="container">
-        <header class="dashboard__header">
-            <div>
-                <h1>Cast your vote</h1>
-                <?php if ($election): ?>
-                    <p><?= sanitize($election['title']) ?></p>
-                <?php else: ?>
+        <?php if ($election): ?>
+            <header class="voting-booth__header">
+                <div class="voting-booth__identity">
+                    <p class="eyebrow">Secure voting booth</p>
+                    <h1><?= sanitize($election['title']) ?></h1>
+                    <p>Review each contest carefully before submitting.</p>
+                </div>
+                <div class="voting-booth__status">
+                    <?php if ($pollCountdownTarget instanceof DateTimeImmutable): ?>
+                        <div class="voting-booth__countdown">
+                            <span><?= sanitize($pollCountdownLabel) ?></span>
+                            <time datetime="<?= sanitize($pollCountdownTarget->format(DATE_ATOM)) ?>"
+                                data-poll-countdown
+                                data-countdown-at="<?= (int) $pollCountdownTarget->getTimestamp() ?>">
+                                <?= sanitize(format_election_local_time(
+                                    $pollCountdownTarget->format('Y-m-d H:i:s'),
+                                    $election['timezone']
+                                )) ?>
+                            </time>
+                        </div>
+                    <?php else: ?>
+                        <div class="voting-booth__countdown">
+                            <span>Poll status</span>
+                            <strong><?= sanitize(ucfirst($election['status'])) ?></strong>
+                        </div>
+                    <?php endif; ?>
+                    <span class="voting-session-indicator" data-session-indicator
+                        data-state="checking" role="status" aria-live="polite">
+                        Checking session…
+                    </span>
+                </div>
+            </header>
+        <?php else: ?>
+            <header class="dashboard__header">
+                <div>
+                    <h1>Cast your vote</h1>
                     <p>Select an open election from your dashboard.</p>
-                <?php endif; ?>
-            </div>
-        </header>
+                </div>
+            </header>
+        <?php endif; ?>
 
         <?php if (!$election): ?>
             <div class="alert alert--error" role="alert">
@@ -154,9 +210,15 @@ require_once __DIR__ . '/../includes/header.php';
             <a class="btn btn--outline" href="<?= BASE_URL ?>/voter/dashboard.php">Return to dashboard</a>
         <?php elseif (!(bool) $election['voting_available']): ?>
             <div class="alert alert--info" role="status">
-                Voting is not currently within the scheduled dates
-                (<?= sanitize($electionStart) ?> to <?= sanitize($electionEnd) ?>,
-                <?= sanitize($election['timezone']) ?>).
+                <?php if ($election['status'] === 'paused'): ?>
+                    Voting is temporarily paused for this election.
+                <?php elseif ($election['status'] === 'closed'): ?>
+                    This election is closed and is no longer accepting votes.
+                <?php else: ?>
+                    Voting is not currently within the scheduled dates
+                    (<?= sanitize($electionStart) ?> to <?= sanitize($electionEnd) ?>,
+                    <?= sanitize($election['timezone']) ?>).
+                <?php endif; ?>
             </div>
         <?php elseif ($voter['status'] !== 'active'): ?>
             <div class="alert alert--error" role="alert">
@@ -260,20 +322,39 @@ require_once __DIR__ . '/../includes/header.php';
                     </div>
 
                     <div class="ballot-positions">
+                        <?php $positionNumber = 0; ?>
                         <?php foreach ($positions as $position): ?>
                             <?php
+                            $positionNumber++;
                             $positionId = (int) $position['id'];
                             $candidateCount = count($position['candidates']);
+                            $choiceLabel = $position['contest_type'] === 'referendum' ? 'option' : 'candidate';
+                            $pluralChoiceLabel = $choiceLabel . 's';
+                            if ($election['voting_system'] === 'multiple_selection') {
+                                $selectionRule = 'Select up to ' . (int) $position['max_votes'] . ' '
+                                    . ((int) $position['max_votes'] === 1 ? $choiceLabel : $pluralChoiceLabel);
+                            } elseif ($election['voting_system'] === 'ranked_choice') {
+                                $selectionRule = 'Rank ' . $pluralChoiceLabel;
+                            } else {
+                                $selectionRule = 'Select 1 ' . $choiceLabel;
+                            }
                             ?>
                             <section class="ballot-position"
                                 data-ballot-position="<?= $positionId ?>"
+                                data-submitted-position="<?= isset($alreadyVoted[$positionId]) ? 'true' : 'false' ?>"
                                 data-max-votes="<?= (int) $position['max_votes'] ?>"
                                 aria-labelledby="position-<?= $positionId ?>">
                                 <div class="ballot-position__header">
-                                    <h2 id="position-<?= $positionId ?>"><?= sanitize($position['title']) ?></h2>
-                                    <?php if (isset($alreadyVoted[$positionId])): ?>
-                                        <span class="badge badge--success">Submitted</span>
-                                    <?php endif; ?>
+                                    <div class="ballot-position__title">
+                                        <span class="ballot-position__number">Contest <?= $positionNumber ?></span>
+                                        <h2 id="position-<?= $positionId ?>"><?= sanitize($position['title']) ?></h2>
+                                    </div>
+                                    <div class="ballot-position__rules">
+                                        <span class="badge badge--info"><?= sanitize($selectionRule) ?></span>
+                                        <?php if (isset($alreadyVoted[$positionId])): ?>
+                                            <span class="badge badge--success">Submitted</span>
+                                        <?php endif; ?>
+                                    </div>
                                 </div>
 
                                 <?php if (isset($alreadyVoted[$positionId])): ?>
@@ -287,38 +368,48 @@ require_once __DIR__ . '/../includes/header.php';
                                                 Choose one candidate for <?= sanitize($position['title']) ?>
                                             </legend>
                                             <?php foreach ($position['candidates'] as $candidateIndex => $candidate): ?>
-                                                <label class="candidate-option" data-candidate-option>
-                                                    <input type="radio" name="votes[<?= $positionId ?>]"
-                                                        value="<?= (int) $candidate['candidate_id'] ?>"
-                                                        <?= $candidateIndex === 0 ? 'required' : '' ?>>
-                                                    <span class="candidate-option__content">
-                                                        <?php if (
-                                                            is_string($candidate['photo_path'])
-                                                            && preg_match('~\Aassets/img/candidates/[a-f0-9]{32}\.(?:jpg|png|webp)\z~', $candidate['photo_path']) === 1
-                                                        ): ?>
-                                                            <img class="candidate-option__photo"
-                                                                src="<?= BASE_URL ?>/<?= sanitize($candidate['photo_path']) ?>"
-                                                                alt="">
-                                                        <?php endif; ?>
-                                                        <span class="candidate-option__details">
-                                                            <strong class="candidate-option__name"><?= sanitize($candidate['candidate_name']) ?></strong>
-                                                            <?php if (is_string($candidate['affiliation']) && $candidate['affiliation'] !== ''): ?>
-                                                                <span class="candidate-option__affiliation"><?= sanitize($candidate['affiliation']) ?></span>
+                                                <div class="candidate-option-card">
+                                                    <label class="candidate-option" data-candidate-option>
+                                                        <input type="radio" name="votes[<?= $positionId ?>]"
+                                                            value="<?= (int) $candidate['candidate_id'] ?>"
+                                                            <?= $candidateIndex === 0 ? 'required' : '' ?>>
+                                                        <span class="candidate-option__content">
+                                                            <?php if (
+                                                                is_string($candidate['photo_path'])
+                                                                && preg_match('~\Aassets/img/candidates/[a-f0-9]{32}\.(?:jpg|png|webp)\z~', $candidate['photo_path']) === 1
+                                                            ): ?>
+                                                                <img class="candidate-option__photo"
+                                                                    src="<?= BASE_URL ?>/<?= sanitize($candidate['photo_path']) ?>"
+                                                                    alt="">
                                                             <?php endif; ?>
-                                                            <?php if (is_string($candidate['campaign_slogan']) && $candidate['campaign_slogan'] !== ''): ?>
-                                                                <span class="candidate-option__slogan"><?= sanitize($candidate['campaign_slogan']) ?></span>
-                                                            <?php endif; ?>
-                                                            <span><?= $candidate['manifesto'] !== null && $candidate['manifesto'] !== ''
-                                                                ? nl2br(sanitize($candidate['manifesto']))
-                                                                : 'No manifesto provided.' ?></span>
+                                                            <span class="candidate-option__details">
+                                                                <strong class="candidate-option__name"><?= sanitize($candidate['candidate_name']) ?></strong>
+                                                                <?php if (is_string($candidate['affiliation']) && $candidate['affiliation'] !== ''): ?>
+                                                                    <span class="candidate-option__affiliation"><?= sanitize($candidate['affiliation']) ?></span>
+                                                                <?php endif; ?>
+                                                                <?php if (is_string($candidate['campaign_slogan']) && $candidate['campaign_slogan'] !== ''): ?>
+                                                                    <span class="candidate-option__slogan"><?= sanitize($candidate['campaign_slogan']) ?></span>
+                                                                <?php endif; ?>
+                                                                <?php if (!is_string($candidate['manifesto']) || trim($candidate['manifesto']) === ''): ?>
+                                                                    <span class="form__hint">No manifesto provided.</span>
+                                                                <?php endif; ?>
+                                                            </span>
                                                         </span>
-                                                    </span>
-                                                </label>
+                                                    </label>
+                                                    <?php if (is_string($candidate['manifesto']) && trim($candidate['manifesto']) !== ''): ?>
+                                                        <button class="candidate-option__manifesto-link" type="button"
+                                                            data-open-manifesto="candidate-manifesto-<?= (int) $candidate['candidate_id'] ?>"
+                                                            aria-haspopup="dialog"
+                                                            aria-controls="candidate-manifesto-<?= (int) $candidate['candidate_id'] ?>">
+                                                            Read Manifesto
+                                                        </button>
+                                                    <?php endif; ?>
+                                                </div>
                                             <?php endforeach; ?>
                                             <?php if ($election['allow_abstentions']): ?>
                                                 <label class="candidate-option candidate-option--abstain">
                                                     <input type="radio" name="votes[<?= $positionId ?>]" value="abstain">
-                                                    <span><strong>Abstain</strong></span>
+                                                    <span><strong>Abstain / Skip this position</strong></span>
                                                 </label>
                                             <?php endif; ?>
                                         </fieldset>
@@ -329,27 +420,47 @@ require_once __DIR__ . '/../includes/header.php';
                                                 <?= sanitize($position['title']) ?>
                                             </legend>
                                             <?php foreach ($position['candidates'] as $candidate): ?>
-                                                <label class="candidate-option" data-candidate-option>
-                                                    <input type="checkbox" name="votes[<?= $positionId ?>][]"
-                                                        value="<?= (int) $candidate['candidate_id'] ?>">
-                                                    <span class="candidate-option__details">
-                                                        <strong class="candidate-option__name"><?= sanitize($candidate['candidate_name']) ?></strong>
-                                                        <?php if (is_string($candidate['affiliation']) && $candidate['affiliation'] !== ''): ?>
-                                                            <span class="candidate-option__affiliation"><?= sanitize($candidate['affiliation']) ?></span>
-                                                        <?php endif; ?>
-                                                        <?php if (is_string($candidate['campaign_slogan']) && $candidate['campaign_slogan'] !== ''): ?>
-                                                            <span class="candidate-option__slogan"><?= sanitize($candidate['campaign_slogan']) ?></span>
-                                                        <?php endif; ?>
-                                                        <span><?= $candidate['manifesto'] !== null && $candidate['manifesto'] !== ''
-                                                            ? nl2br(sanitize($candidate['manifesto']))
-                                                            : 'No manifesto provided.' ?></span>
-                                                    </span>
-                                                </label>
+                                                <div class="candidate-option-card">
+                                                    <label class="candidate-option" data-candidate-option>
+                                                        <input type="checkbox" name="votes[<?= $positionId ?>][]"
+                                                            value="<?= (int) $candidate['candidate_id'] ?>">
+                                                        <span class="candidate-option__content">
+                                                            <?php if (
+                                                                is_string($candidate['photo_path'])
+                                                                && preg_match('~\Aassets/img/candidates/[a-f0-9]{32}\.(?:jpg|png|webp)\z~', $candidate['photo_path']) === 1
+                                                            ): ?>
+                                                                <img class="candidate-option__photo"
+                                                                    src="<?= BASE_URL ?>/<?= sanitize($candidate['photo_path']) ?>"
+                                                                    alt="">
+                                                            <?php endif; ?>
+                                                            <span class="candidate-option__details">
+                                                                <strong class="candidate-option__name"><?= sanitize($candidate['candidate_name']) ?></strong>
+                                                                <?php if (is_string($candidate['affiliation']) && $candidate['affiliation'] !== ''): ?>
+                                                                    <span class="candidate-option__affiliation"><?= sanitize($candidate['affiliation']) ?></span>
+                                                                <?php endif; ?>
+                                                                <?php if (is_string($candidate['campaign_slogan']) && $candidate['campaign_slogan'] !== ''): ?>
+                                                                    <span class="candidate-option__slogan"><?= sanitize($candidate['campaign_slogan']) ?></span>
+                                                                <?php endif; ?>
+                                                                <?php if (!is_string($candidate['manifesto']) || trim($candidate['manifesto']) === ''): ?>
+                                                                    <span class="form__hint">No manifesto provided.</span>
+                                                                <?php endif; ?>
+                                                            </span>
+                                                        </span>
+                                                    </label>
+                                                    <?php if (is_string($candidate['manifesto']) && trim($candidate['manifesto']) !== ''): ?>
+                                                        <button class="candidate-option__manifesto-link" type="button"
+                                                            data-open-manifesto="candidate-manifesto-<?= (int) $candidate['candidate_id'] ?>"
+                                                            aria-haspopup="dialog"
+                                                            aria-controls="candidate-manifesto-<?= (int) $candidate['candidate_id'] ?>">
+                                                            Read Manifesto
+                                                        </button>
+                                                    <?php endif; ?>
+                                                </div>
                                             <?php endforeach; ?>
                                             <?php if ($election['allow_abstentions']): ?>
                                                 <label class="candidate-option candidate-option--abstain">
                                                     <input type="checkbox" name="abstain[<?= $positionId ?>]" value="1" data-abstain>
-                                                    <span><strong>Abstain from this position</strong></span>
+                                                    <span><strong>Abstain / Skip this position</strong></span>
                                                 </label>
                                             <?php endif; ?>
                                         </fieldset>
@@ -358,26 +469,52 @@ require_once __DIR__ . '/../includes/header.php';
                                             data-ranking-count="<?= $candidateCount ?>">
                                             <legend>Rank options from 1 (first choice) onward. Leave others unranked.</legend>
                                             <?php foreach ($position['candidates'] as $candidate): ?>
-                                                <label class="ranked-candidate">
-                                                    <span class="candidate-option__name">
-                                                        <?= sanitize($candidate['candidate_name']) ?>
-                                                        <?php if (is_string($candidate['affiliation']) && $candidate['affiliation'] !== ''): ?>
-                                                            <small><?= sanitize($candidate['affiliation']) ?></small>
-                                                        <?php endif; ?>
-                                                    </span>
-                                                    <select name="votes[<?= $positionId ?>][<?= (int) $candidate['candidate_id'] ?>]"
-                                                        data-rank-choice aria-label="Rank <?= sanitize($candidate['candidate_name']) ?>">
-                                                        <option value="0">Not ranked</option>
-                                                        <?php for ($rank = 1; $rank <= $candidateCount; $rank++): ?>
-                                                            <option value="<?= $rank ?>"><?= $rank ?></option>
-                                                        <?php endfor; ?>
-                                                    </select>
-                                                </label>
+                                                <div class="ranked-candidate-option">
+                                                    <label class="ranked-candidate">
+                                                        <span class="candidate-option__content">
+                                                            <?php if (
+                                                                is_string($candidate['photo_path'])
+                                                                && preg_match('~\Aassets/img/candidates/[a-f0-9]{32}\.(?:jpg|png|webp)\z~', $candidate['photo_path']) === 1
+                                                            ): ?>
+                                                                <img class="candidate-option__photo"
+                                                                    src="<?= BASE_URL ?>/<?= sanitize($candidate['photo_path']) ?>"
+                                                                    alt="">
+                                                            <?php endif; ?>
+                                                            <span class="candidate-option__details">
+                                                                <strong class="candidate-option__name"><?= sanitize($candidate['candidate_name']) ?></strong>
+                                                                <?php if (is_string($candidate['affiliation']) && $candidate['affiliation'] !== ''): ?>
+                                                                    <span class="candidate-option__affiliation"><?= sanitize($candidate['affiliation']) ?></span>
+                                                                <?php endif; ?>
+                                                                <?php if (is_string($candidate['campaign_slogan']) && $candidate['campaign_slogan'] !== ''): ?>
+                                                                    <span class="candidate-option__slogan"><?= sanitize($candidate['campaign_slogan']) ?></span>
+                                                                <?php endif; ?>
+                                                                <?php if (!is_string($candidate['manifesto']) || trim($candidate['manifesto']) === ''): ?>
+                                                                    <span class="form__hint">No manifesto provided.</span>
+                                                                <?php endif; ?>
+                                                            </span>
+                                                        </span>
+                                                        <select name="votes[<?= $positionId ?>][<?= (int) $candidate['candidate_id'] ?>]"
+                                                            data-rank-choice aria-label="Rank <?= sanitize($candidate['candidate_name']) ?>">
+                                                            <option value="0">Not ranked</option>
+                                                            <?php for ($rank = 1; $rank <= $candidateCount; $rank++): ?>
+                                                                <option value="<?= $rank ?>"><?= $rank ?></option>
+                                                            <?php endfor; ?>
+                                                        </select>
+                                                    </label>
+                                                    <?php if (is_string($candidate['manifesto']) && trim($candidate['manifesto']) !== ''): ?>
+                                                        <button class="candidate-option__manifesto-link" type="button"
+                                                            data-open-manifesto="candidate-manifesto-<?= (int) $candidate['candidate_id'] ?>"
+                                                            aria-haspopup="dialog"
+                                                            aria-controls="candidate-manifesto-<?= (int) $candidate['candidate_id'] ?>">
+                                                            Read Manifesto
+                                                        </button>
+                                                    <?php endif; ?>
+                                                </div>
                                             <?php endforeach; ?>
                                             <?php if ($election['allow_abstentions']): ?>
                                                 <label class="candidate-option candidate-option--abstain">
                                                     <input type="checkbox" name="abstain[<?= $positionId ?>]" value="1" data-abstain>
-                                                    <span><strong>Abstain from this position</strong></span>
+                                                    <span><strong>Abstain / Skip this position</strong></span>
                                                 </label>
                                             <?php endif; ?>
                                         </fieldset>
@@ -389,7 +526,7 @@ require_once __DIR__ . '/../includes/header.php';
                     </div>
 
                     <div class="ballot-actions">
-                        <button class="btn btn--primary" type="button" data-review-ballot>Review selections</button>
+                        <button class="btn btn--primary" type="button" data-review-ballot>Review My Ballot</button>
                         <a href="<?= BASE_URL ?>/voter/dashboard.php">Cancel</a>
                     </div>
                     <p class="loading-state" role="status" aria-live="polite" data-loading-indicator hidden>
@@ -400,21 +537,54 @@ require_once __DIR__ . '/../includes/header.php';
                     <div class="modal ballot-review" data-ballot-review aria-hidden="true">
                         <div class="modal__dialog" role="dialog" aria-modal="true"
                             aria-labelledby="ballot-review-title" tabindex="-1">
-                            <header class="modal__header"><h2 id="ballot-review-title">Confirm your ballot</h2></header>
-                            <p>Review your selections before submitting. Submitted votes cannot be changed.</p>
+                            <header class="modal__header"><h2 id="ballot-review-title">Review your ballot</h2></header>
+                            <p class="ballot-review__warning">
+                                <strong>Final confirmation:</strong> Your selections cannot be changed once submitted.
+                                Your receipt confirms participation details and does not display your selections.
+                            </p>
                             <ul class="ballot-review__summary" data-ballot-summary></ul>
                             <div class="modal__footer">
                                 <button class="btn btn--outline" type="button" data-close-review>Go back</button>
-                                <button class="btn btn--primary" type="submit" data-confirm-ballot>Confirm and submit</button>
+                                <button class="btn btn--primary" type="submit" data-confirm-ballot>Confirm &amp; Cast Ballot</button>
                             </div>
                         </div>
                     </div>
                 </form>
                 <noscript><p>JavaScript is required to review and confirm your ballot.</p></noscript>
-                <script src="<?= BASE_URL ?>/assets/js/voting.js" defer></script>
+            <?php endif; ?>
+            <?php if ($showBallot): ?>
+                <?php foreach ($positions as $position): ?>
+                    <?php foreach ($position['candidates'] as $candidate): ?>
+                        <?php if (is_string($candidate['manifesto']) && trim($candidate['manifesto']) !== ''): ?>
+                            <?php $candidateId = (int) $candidate['candidate_id']; ?>
+                            <dialog class="candidate-manifesto-dialog"
+                                id="candidate-manifesto-<?= $candidateId ?>"
+                                aria-labelledby="candidate-manifesto-title-<?= $candidateId ?>">
+                                <header class="candidate-manifesto-dialog__header">
+                                    <div>
+                                        <p class="eyebrow"><?= sanitize($position['title']) ?></p>
+                                        <h2 id="candidate-manifesto-title-<?= $candidateId ?>">
+                                            <?= sanitize($candidate['candidate_name']) ?> — Manifesto
+                                        </h2>
+                                    </div>
+                                    <button class="btn btn--outline" type="button" data-close-manifesto>
+                                        Close
+                                    </button>
+                                </header>
+                                <div class="candidate-manifesto-dialog__body">
+                                    <?= nl2br(sanitize($candidate['manifesto'])) ?>
+                                </div>
+                            </dialog>
+                        <?php endif; ?>
+                    <?php endforeach; ?>
+                <?php endforeach; ?>
             <?php endif; ?>
         <?php endif; ?>
     </div>
 </section>
+
+<?php if ($election): ?>
+    <script src="<?= BASE_URL ?>/assets/js/voting.js?v=2" defer></script>
+<?php endif; ?>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

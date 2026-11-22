@@ -56,6 +56,10 @@ require_once __DIR__ . '/../includes/header.php';
                     Signing in…
                 </p>
             </form>
+
+            <p class="auth-login__voter-link">
+                Voter? <a href="<?= BASE_URL ?>/voter/login.php">Sign in to the Voter Portal</a>
+            </p>
         </div>
     </div>
 </section>
