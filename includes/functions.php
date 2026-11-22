@@ -18,11 +18,18 @@ function start_secure_session(): void
     ini_set('session.use_only_cookies', '1');
     ini_set('session.use_strict_mode', '1');
     ini_set('session.use_trans_sid', '0');
-    ini_set('session.gc_maxlifetime', (string) SESSION_LIFETIME);
+    $rememberCookiePresent = isset($_COOKIE[REMEMBER_ME_COOKIE])
+        && is_string($_COOKIE[REMEMBER_ME_COOKIE])
+        && hash_equals('1', $_COOKIE[REMEMBER_ME_COOKIE]);
+    $cookieLifetime = $rememberCookiePresent
+        ? REMEMBERED_SESSION_LIFETIME
+        : SESSION_LIFETIME;
+
+    ini_set('session.gc_maxlifetime', (string) $cookieLifetime);
 
     session_name('ballot_bridge_session');
     session_set_cookie_params([
-        'lifetime' => SESSION_LIFETIME,
+        'lifetime' => $cookieLifetime,
         'path' => rtrim(BASE_URL, '/') . '/',
         'secure' => !empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off',
         'httponly' => true,
@@ -32,12 +39,16 @@ function start_secure_session(): void
     session_start();
 
     $now = time();
+    $sessionLifetime = $rememberCookiePresent
+        && ($_SESSION['remember_me'] ?? false) === true
+        ? REMEMBERED_SESSION_LIFETIME
+        : SESSION_LIFETIME;
     if (array_key_exists('last_activity', $_SESSION)) {
         $lastActivity = $_SESSION['last_activity'];
         if (
             !is_int($lastActivity)
             || $lastActivity > $now
-            || $now - $lastActivity >= SESSION_LIFETIME
+            || $now - $lastActivity >= $sessionLifetime
         ) {
             $_SESSION = [];
             if (!session_regenerate_id(true)) {

@@ -79,7 +79,8 @@ if ($election) {
     $candidateQuery = $pdo->prepare(
         "SELECT p.id AS position_id, p.title AS position_title, p.max_votes,
                 p.contest_type, p.randomize_candidates,
-                c.id AS candidate_id, c.display_name, c.manifesto, c.photo_path, c.affiliation,
+                c.id AS candidate_id, c.display_name, c.manifesto, c.campaign_slogan,
+                c.photo_path, c.affiliation,
                 COALESCE(u.full_name, c.display_name, 'Unnamed option') AS candidate_name
          FROM positions p
          LEFT JOIN candidates c
@@ -304,6 +305,9 @@ require_once __DIR__ . '/../includes/header.php';
                                                             <?php if (is_string($candidate['affiliation']) && $candidate['affiliation'] !== ''): ?>
                                                                 <span class="candidate-option__affiliation"><?= sanitize($candidate['affiliation']) ?></span>
                                                             <?php endif; ?>
+                                                            <?php if (is_string($candidate['campaign_slogan']) && $candidate['campaign_slogan'] !== ''): ?>
+                                                                <span class="candidate-option__slogan"><?= sanitize($candidate['campaign_slogan']) ?></span>
+                                                            <?php endif; ?>
                                                             <span><?= $candidate['manifesto'] !== null && $candidate['manifesto'] !== ''
                                                                 ? nl2br(sanitize($candidate['manifesto']))
                                                                 : 'No manifesto provided.' ?></span>
@@ -332,6 +336,9 @@ require_once __DIR__ . '/../includes/header.php';
                                                         <strong class="candidate-option__name"><?= sanitize($candidate['candidate_name']) ?></strong>
                                                         <?php if (is_string($candidate['affiliation']) && $candidate['affiliation'] !== ''): ?>
                                                             <span class="candidate-option__affiliation"><?= sanitize($candidate['affiliation']) ?></span>
+                                                        <?php endif; ?>
+                                                        <?php if (is_string($candidate['campaign_slogan']) && $candidate['campaign_slogan'] !== ''): ?>
+                                                            <span class="candidate-option__slogan"><?= sanitize($candidate['campaign_slogan']) ?></span>
                                                         <?php endif; ?>
                                                         <span><?= $candidate['manifesto'] !== null && $candidate['manifesto'] !== ''
                                                             ? nl2br(sanitize($candidate['manifesto']))

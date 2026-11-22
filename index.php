@@ -64,9 +64,12 @@ require_once __DIR__ . '/includes/header.php';
             <article class="card role-card">
                 <h3>Candidate</h3>
                 <p>Share your profile and manifesto with voters in your election.</p>
-                <a class="role-card__link" href="<?= BASE_URL ?>/auth/register.php">
-                    Get started as a candidate
+                <a class="role-card__link" href="<?= BASE_URL ?>/candidate/register.php">
+                    Apply as a candidate
                 </a>
+                <p class="role-card__login">
+                    Already applied? <a href="<?= BASE_URL ?>/candidate/login.php">Sign in to your candidate portal</a>.
+                </p>
             </article>
             <article class="card role-card">
                 <h3>Admin</h3>

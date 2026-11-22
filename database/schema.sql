@@ -103,6 +103,7 @@ CREATE TABLE elections (
     start_datetime DATETIME NOT NULL,
     end_datetime DATETIME NOT NULL,
     timezone VARCHAR(64) NOT NULL DEFAULT 'UTC',
+    nomination_deadline DATETIME NULL,
     auto_launch TINYINT(1) NOT NULL DEFAULT 0,
     voting_system ENUM('fptp', 'multiple_selection', 'ranked_choice')
         NOT NULL DEFAULT 'fptp',
@@ -140,12 +141,15 @@ CREATE TABLE positions (
 CREATE TABLE candidates (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     user_id INT UNSIGNED NULL,
+    application_source ENUM('self_registration', 'admin') NOT NULL DEFAULT 'admin',
     display_name VARCHAR(150) NULL,
     election_id INT UNSIGNED NOT NULL,
     position_id INT UNSIGNED NOT NULL,
     manifesto TEXT NULL,
+    campaign_slogan VARCHAR(200) NULL,
     photo_path VARCHAR(255) NULL,
     affiliation VARCHAR(150) NULL,
+    rejection_feedback TEXT NULL,
     status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
     PRIMARY KEY (id),
     KEY idx_candidates_user_id (user_id),

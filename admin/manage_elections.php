@@ -144,6 +144,14 @@ if (is_post()) {
         $endDate = isset($_POST['end_datetime']) && is_string($_POST['end_datetime'])
             ? parse_election_local_time($_POST['end_datetime'], $timezone)
             : null;
+        $nominationDeadlineInputValid = !array_key_exists('nomination_deadline', $_POST)
+            || is_string($_POST['nomination_deadline']);
+        $rawNominationDeadline = isset($_POST['nomination_deadline']) && is_string($_POST['nomination_deadline'])
+            ? trim($_POST['nomination_deadline'])
+            : '';
+        $nominationDeadline = $rawNominationDeadline === ''
+            ? null
+            : parse_election_local_time($rawNominationDeadline, $timezone);
         $votingSystem = isset($_POST['voting_system']) && is_string($_POST['voting_system'])
             ? $_POST['voting_system']
             : '';
@@ -181,11 +189,16 @@ if (is_post()) {
             || $startDate === null
             || $endDate === null
             || $endDate <= $startDate
+            || !$nominationDeadlineInputValid
+            || ($rawNominationDeadline !== '' && (
+                $nominationDeadline === null
+                || $nominationDeadline > $startDate
+            ))
             || !is_valid_election_timezone($timezone)
             || !in_array($votingSystem, ['fptp', 'multiple_selection', 'ranked_choice'], true)
             || !$validMethods
         ) {
-            set_flash('error', 'Check the title, instructions, schedule, timezone, voting rules, verification options, and logo file.');
+            set_flash('error', 'Check the title, instructions, schedule, nomination deadline, timezone, voting rules, verification options, and logo file.');
             redirect(BASE_URL . '/admin/manage_elections.php');
         }
 
@@ -198,6 +211,7 @@ if (is_post()) {
         $description = $description === '' ? null : $description;
         $startDate = $startDate->format('Y-m-d H:i:s');
         $endDate = $endDate->format('Y-m-d H:i:s');
+        $nominationDeadline = $nominationDeadline?->format('Y-m-d H:i:s');
         $verificationMethods = array_values(array_unique($verificationMethods));
         $methodsValue = implode(',', $verificationMethods);
         $existing = false;
@@ -209,6 +223,7 @@ if (is_post()) {
             if ($electionId !== null) {
                 $existingQuery = $pdo->prepare(
                     'SELECT title, description, status, start_datetime, end_datetime, timezone,
+                            nomination_deadline,
                             auto_launch, voting_system, verification_methods, allow_abstentions,
                             organization_logo_path
                      FROM elections WHERE id = :election_id FOR UPDATE'
@@ -234,7 +249,8 @@ if (is_post()) {
                     'UPDATE elections
                      SET title = :title, description = :description,
                          start_datetime = :start_datetime, end_datetime = :end_datetime,
-                         timezone = :timezone, auto_launch = :auto_launch,
+                         timezone = :timezone, nomination_deadline = :nomination_deadline,
+                         auto_launch = :auto_launch,
                          voting_system = :voting_system, verification_methods = :verification_methods,
                          allow_abstentions = :allow_abstentions,
                          organization_logo_path = :organization_logo_path,
@@ -247,6 +263,7 @@ if (is_post()) {
                     'start_datetime' => $startDate,
                     'end_datetime' => $endDate,
                     'timezone' => $timezone,
+                    'nomination_deadline' => $nominationDeadline,
                     'auto_launch' => $autoLaunch ? 1 : 0,
                     'voting_system' => $votingSystem,
                     'verification_methods' => $methodsValue,
@@ -262,6 +279,7 @@ if (is_post()) {
                     'start_datetime' => $existing['start_datetime'],
                     'end_datetime' => $existing['end_datetime'],
                     'timezone' => $existing['timezone'],
+                    'nomination_deadline' => $existing['nomination_deadline'],
                     'auto_launch' => (int) $existing['auto_launch'],
                     'voting_system' => $existing['voting_system'],
                     'verification_methods' => $existing['verification_methods'],
@@ -275,6 +293,7 @@ if (is_post()) {
                     'start_datetime' => $startDate,
                     'end_datetime' => $endDate,
                     'timezone' => $timezone,
+                    'nomination_deadline' => $nominationDeadline,
                     'auto_launch' => $autoLaunch ? 1 : 0,
                     'voting_system' => $votingSystem,
                     'verification_methods' => $methodsValue,
@@ -296,10 +315,12 @@ if (is_post()) {
                 $saveElection = $pdo->prepare(
                     'INSERT INTO elections
                         (title, description, start_datetime, end_datetime, timezone, auto_launch,
+                         nomination_deadline,
                          voting_system, verification_methods, allow_abstentions,
                          organization_logo_path, status, created_by)
                      VALUES
                         (:title, :description, :start_datetime, :end_datetime, :timezone, :auto_launch,
+                         :nomination_deadline,
                          :voting_system, :verification_methods, :allow_abstentions,
                          :organization_logo_path, :status, :created_by)'
                 );
@@ -309,6 +330,7 @@ if (is_post()) {
                     'start_datetime' => $startDate,
                     'end_datetime' => $endDate,
                     'timezone' => $timezone,
+                    'nomination_deadline' => $nominationDeadline,
                     'auto_launch' => $autoLaunch ? 1 : 0,
                     'voting_system' => $votingSystem,
                     'verification_methods' => $methodsValue,
@@ -332,6 +354,7 @@ if (is_post()) {
                         'start_datetime' => $startDate,
                         'end_datetime' => $endDate,
                         'timezone' => $timezone,
+                        'nomination_deadline' => $nominationDeadline,
                         'auto_launch' => $autoLaunch ? 1 : 0,
                         'voting_system' => $votingSystem,
                         'verification_methods' => $methodsValue,
@@ -682,6 +705,7 @@ if (is_post()) {
 
 $electionsQuery = $pdo->prepare(
     'SELECT id, title, description, start_datetime, end_datetime, timezone,
+            nomination_deadline,
             auto_launch, voting_system, verification_methods, allow_abstentions,
             organization_logo_path, status
      FROM elections ORDER BY id DESC'
@@ -708,6 +732,7 @@ $editElection = false;
 if ($editElectionId !== false) {
     $editElectionQuery = $pdo->prepare(
         'SELECT id, title, description, start_datetime, end_datetime, timezone,
+                nomination_deadline,
                 auto_launch, voting_system, verification_methods, allow_abstentions,
                 organization_logo_path, status
          FROM elections WHERE id = :election_id'
@@ -857,6 +882,14 @@ require_once __DIR__ . '/../includes/header.php';
                                     ? sanitize(str_replace(' ', 'T', substr($editElection['end_datetime'], 0, 16)))
                                     : '' ?>"
                                 required>
+                        </div>
+                        <div class="form__group">
+                            <label for="nomination_deadline">Nomination freeze deadline <span>(optional)</span></label>
+                            <input id="nomination_deadline" name="nomination_deadline" type="datetime-local"
+                                value="<?= $editElection && is_string($editElection['nomination_deadline'])
+                                    ? sanitize(str_replace(' ', 'T', substr($editElection['nomination_deadline'], 0, 16)))
+                                    : '' ?>">
+                            <p class="form__hint">Must be on or before poll opening. Leave blank when nominations have no separate deadline.</p>
                         </div>
                     </div>
                     <div class="form__group">

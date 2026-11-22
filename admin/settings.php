@@ -113,6 +113,14 @@ if (is_post()) {
         $endDate = isset($_POST['end_datetime']) && is_string($_POST['end_datetime'])
             ? parse_election_local_time($_POST['end_datetime'], $timezone)
             : null;
+        $nominationDeadlineInputValid = !array_key_exists('nomination_deadline', $_POST)
+            || is_string($_POST['nomination_deadline']);
+        $rawNominationDeadline = isset($_POST['nomination_deadline']) && is_string($_POST['nomination_deadline'])
+            ? trim($_POST['nomination_deadline'])
+            : '';
+        $nominationDeadline = $rawNominationDeadline === ''
+            ? null
+            : parse_election_local_time($rawNominationDeadline, $timezone);
         $votingSystem = isset($_POST['voting_system']) && is_string($_POST['voting_system'])
             ? $_POST['voting_system']
             : '';
@@ -151,11 +159,16 @@ if (is_post()) {
             || $startDate === null
             || $endDate === null
             || $endDate <= $startDate
+            || !$nominationDeadlineInputValid
+            || ($rawNominationDeadline !== '' && (
+                $nominationDeadline === null
+                || $nominationDeadline > $startDate
+            ))
             || !is_valid_election_timezone($timezone)
             || !in_array($votingSystem, ['fptp', 'multiple_selection', 'ranked_choice'], true)
             || !$methodsValid
         ) {
-            set_flash('error', 'Check the title, instructions, support email, schedule, timezone, voting method, and verification settings.');
+            set_flash('error', 'Check the title, instructions, support email, schedule, nomination deadline, timezone, voting method, and verification settings.');
             election_settings_redirect($electionId);
         }
 
@@ -163,13 +176,15 @@ if (is_post()) {
         $supportEmail = $supportEmail === '' ? null : $supportEmail;
         $startValue = $startDate->format('Y-m-d H:i:s');
         $endValue = $endDate->format('Y-m-d H:i:s');
+        $nominationValue = $nominationDeadline?->format('Y-m-d H:i:s');
         $methodsValue = implode(',', $verificationMethods);
 
         try {
             $pdo->beginTransaction();
             $electionQuery = $pdo->prepare(
                 'SELECT id, title, description, support_email, start_datetime, end_datetime,
-                        timezone, status, voting_system, verification_methods, allow_abstentions
+                        timezone, nomination_deadline, status, voting_system,
+                        verification_methods, allow_abstentions
                  FROM elections WHERE id = :election_id FOR UPDATE'
             );
             $electionQuery->execute(['election_id' => $electionId]);
@@ -193,6 +208,7 @@ if (is_post()) {
                 'support_email' => $supportEmail,
                 'start_datetime' => $startValue,
                 'end_datetime' => $endValue,
+                'nomination_deadline' => $nominationValue,
                 'timezone' => $timezone,
                 'voting_system' => $votingSystem,
                 'verification_methods' => $methodsValue,
@@ -204,6 +220,7 @@ if (is_post()) {
                 'support_email' => $election['support_email'],
                 'start_datetime' => $election['start_datetime'],
                 'end_datetime' => $election['end_datetime'],
+                'nomination_deadline' => $election['nomination_deadline'],
                 'timezone' => $election['timezone'],
                 'voting_system' => $election['voting_system'],
                 'verification_methods' => implode(',', $existingMethods),
@@ -221,7 +238,8 @@ if (is_post()) {
                     'UPDATE elections
                      SET title = :title, description = :description, support_email = :support_email,
                          start_datetime = :start_datetime, end_datetime = :end_datetime,
-                         timezone = :timezone, voting_system = :voting_system,
+                         nomination_deadline = :nomination_deadline, timezone = :timezone,
+                         voting_system = :voting_system,
                          verification_methods = :verification_methods, allow_abstentions = :allow_abstentions
                      WHERE id = :election_id'
                 );
@@ -232,6 +250,7 @@ if (is_post()) {
                     'support_email' => 'support email updated',
                     'start_datetime' => 'poll opening time',
                     'end_datetime' => 'poll closing time',
+                    'nomination_deadline' => 'nomination freeze deadline',
                     'timezone' => 'timezone updated',
                     'voting_system' => 'voting system updated',
                     'verification_methods' => 'verification methods updated',
@@ -239,10 +258,8 @@ if (is_post()) {
                 ];
                 $changeDescriptions = [];
                 foreach ($changedFields as $field) {
-                    if (in_array($field, ['start_datetime', 'end_datetime'], true)) {
-                        $changeDescriptions[] = $fieldLabels[$field] . ' from '
-                            . substr((string) $oldValues[$field], 11, 5) . ' to '
-                            . substr((string) $newValues[$field], 11, 5);
+                    if (in_array($field, ['start_datetime', 'end_datetime', 'nomination_deadline'], true)) {
+                        $changeDescriptions[] = $fieldLabels[$field] . ' updated';
                     } else {
                         $changeDescriptions[] = $fieldLabels[$field] ?? ($field . ' updated');
                     }
@@ -494,6 +511,7 @@ if (is_post()) {
 
 $elections = $pdo->query(
     'SELECT id, title, description, support_email, start_datetime, end_datetime, timezone,
+            nomination_deadline,
             status, voting_system, verification_methods, allow_abstentions, organization_logo_path
      FROM elections ORDER BY id DESC'
 )->fetchAll();
@@ -553,6 +571,7 @@ $statusLabels = [
 $positionCount = 0;
 $localStart = null;
 $localEnd = null;
+$localNominationDeadline = null;
 $enabledMethods = [];
 if ($selectedElection !== null) {
     $positionCountQuery = $pdo->prepare(
@@ -568,6 +587,12 @@ if ($selectedElection !== null) {
         $selectedElection['end_datetime'],
         $selectedElection['timezone']
     );
+    if (is_string($selectedElection['nomination_deadline']) && $selectedElection['nomination_deadline'] !== '') {
+        $localNominationDeadline = parse_stored_election_time(
+            $selectedElection['nomination_deadline'],
+            $selectedElection['timezone']
+        );
+    }
     $enabledMethods = array_values(array_filter(explode(',', $selectedElection['verification_methods'])));
 }
 $timezones = DateTimeZone::listIdentifiers(DateTimeZone::ALL_WITH_BC);
@@ -702,6 +727,16 @@ require_once __DIR__ . '/../includes/header.php';
                             <input id="settings-end" form="election-settings-form" name="end_datetime"
                                 type="datetime-local" value="<?= $localEnd ? sanitize($localEnd->format('Y-m-d\TH:i')) : '' ?>"
                                 data-setting-field <?= $canEditSettings ? '' : 'disabled' ?> required>
+                        </div>
+                        <div class="form__group">
+                            <label for="settings-nomination-deadline">Nomination freeze deadline (optional)</label>
+                            <input id="settings-nomination-deadline" form="election-settings-form"
+                                name="nomination_deadline" type="datetime-local"
+                                value="<?= $localNominationDeadline
+                                    ? sanitize($localNominationDeadline->format('Y-m-d\TH:i'))
+                                    : '' ?>"
+                                data-setting-field <?= $canEditSettings ? '' : 'disabled' ?>>
+                            <p class="form__hint">Must be on or before poll opening; leave blank if nominations do not have a separate deadline.</p>
                         </div>
                         <div class="form__group">
                             <label for="settings-timezone">Timezone</label>

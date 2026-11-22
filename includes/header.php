@@ -15,7 +15,7 @@ $roleLinks = [
     ],
     'candidate' => [
         ['label' => 'Dashboard', 'href' => '/candidate/dashboard.php'],
-        ['label' => 'Edit profile', 'href' => '/candidate/edit_profile.php'],
+        ['label' => 'My Profile', 'href' => '/candidate/myprofile.php'],
     ],
     'voter' => [
         ['label' => 'Dashboard', 'href' => '/voter/dashboard.php'],
@@ -71,7 +71,10 @@ foreach ($flashMessages as $flash) {
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/layout.css">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/components.css">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/forms.css">
-    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/dashboard.css?v=13">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/dashboard.css?v=20">
+    <?php if (!empty($candidateDashboardStylesheet)): ?>
+        <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/candidate-dashboard.css?v=1">
+    <?php endif; ?>
 </head>
 <body class="site-body<?= $isAdmin ? ' site-body--admin' : '' ?>"
     <?= $isAdmin ? 'data-theme-scope="admin" data-theme="light"' : '' ?>
@@ -95,7 +98,7 @@ foreach ($flashMessages as $flash) {
                 <button type="submit">Logout</button>
             </form>
         </header>
-    <?php else: ?>
+    <?php elseif (empty($hideSiteNavigation)): ?>
         <header>
             <nav class="navbar" aria-label="Primary navigation">
                 <div class="container navbar__inner">
@@ -125,7 +128,7 @@ foreach ($flashMessages as $flash) {
         </header>
     <?php endif; ?>
     <main id="main-content" class="site-main<?= $isAdmin ? ' site-main--admin' : '' ?>">
-        <?php if ($flashMessagesToDisplay !== []): ?>
+        <?php if ($flashMessagesToDisplay !== [] && empty($hideFlashStack)): ?>
             <div class="container flash-stack">
                 <?php foreach ($flashMessagesToDisplay as $flash): ?>
                     <div class="alert <?= $flash['class'] ?>" role="<?= $flash['role'] ?>">

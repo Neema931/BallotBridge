@@ -8,6 +8,10 @@ if (!is_post()) {
 
 verify_csrf();
 
+$loggedOutRole = isset($_SESSION['user']) && is_array($_SESSION['user'])
+    ? ($_SESSION['user']['role'] ?? null)
+    : null;
+
 if (
     isset($_SESSION['user'])
     && is_array($_SESSION['user'])
@@ -37,10 +41,28 @@ if (ini_get('session.use_cookies')) {
     if (!setcookie(session_name(), '', $cookieOptions)) {
         throw new RuntimeException('Unable to clear the session cookie.');
     }
+} else {
+    $cookieParameters = session_get_cookie_params();
+}
+
+$rememberCookieOptions = [
+    'expires' => time() - 42000,
+    'path' => $cookieParameters['path'],
+    'domain' => $cookieParameters['domain'],
+    'secure' => $cookieParameters['secure'],
+    'httponly' => true,
+    'samesite' => $cookieParameters['samesite'] ?? 'Lax',
+];
+if (!setcookie(REMEMBER_ME_COOKIE, '', $rememberCookieOptions)) {
+    throw new RuntimeException('Unable to clear the remembered-session cookie.');
 }
 
 if (!session_destroy()) {
     throw new RuntimeException('Unable to destroy the session.');
+}
+
+if ($loggedOutRole === 'candidate') {
+    redirect(BASE_URL . '/candidate/login.php?logged_out=1');
 }
 
 redirect(BASE_URL . '/auth/login.php');

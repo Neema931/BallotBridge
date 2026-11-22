@@ -3,6 +3,8 @@
     const entryDialog = document.querySelector('#entry-dialog');
     const optionDialog = document.querySelector('#option-dialog');
     const previewDialog = document.querySelector('#preview-dialog');
+    const manifestoDialog = document.querySelector('#manifesto-dialog');
+    const rejectionDialog = document.querySelector('#rejection-dialog');
 
     if (!positionDialog || !entryDialog || !optionDialog || !previewDialog) {
         return;
@@ -50,6 +52,7 @@
         setValue(form, 'candidate_id', editing ? button.dataset.entryId || '' : '');
         setValue(form, 'action', 'save_candidate');
         setValue(form, 'affiliation', editing ? button.dataset.affiliation || '' : '');
+        setValue(form, 'campaign_slogan', editing ? button.dataset.campaignSlogan || '' : '');
         setValue(form, 'manifesto', editing ? button.dataset.manifesto || '' : '');
         const accountField = entryDialog.querySelector('[data-account-field]');
         const accountSelect = form.elements.namedItem('user_id');
@@ -91,6 +94,46 @@
     document.querySelectorAll('[data-open-preview]').forEach((button) => {
         button.addEventListener('click', () => show(previewDialog));
     });
+
+    document.querySelectorAll('[data-read-manifesto]').forEach((button) => {
+        button.addEventListener('click', () => {
+            if (!manifestoDialog) {
+                return;
+            }
+
+            manifestoDialog.querySelector('[data-manifesto-name]').textContent =
+                button.dataset.candidateName || 'Candidate manifesto';
+            manifestoDialog.querySelector('[data-manifesto-position]').textContent =
+                button.dataset.positionTitle || '';
+            manifestoDialog.querySelector('[data-manifesto-content]').textContent =
+                button.dataset.manifesto || 'No manifesto was submitted.';
+            show(manifestoDialog);
+        });
+    });
+
+    document.querySelectorAll('[data-open-rejection]').forEach((button) => {
+        button.addEventListener('click', () => {
+            if (!rejectionDialog) {
+                return;
+            }
+
+            const form = rejectionDialog.querySelector('[data-rejection-form]');
+            const decision = button.dataset.decision === 'disqualify' ? 'disqualify' : 'reject';
+            const isDisqualification = decision === 'disqualify';
+            setValue(form, 'position_id', button.dataset.positionId || '');
+            setValue(form, 'candidate_id', button.dataset.entryId || '');
+            setValue(form, 'decision', decision);
+            rejectionDialog.querySelector('[data-rejection-title]').textContent =
+                isDisqualification ? 'Disqualify candidate' : 'Reject application';
+            rejectionDialog.querySelector('[data-rejection-candidate]').textContent =
+                button.dataset.candidateName || 'Candidate';
+            rejectionDialog.querySelector('[data-rejection-submit]').textContent =
+                isDisqualification ? 'Confirm disqualification' : 'Confirm rejection';
+            rejectionDialog.querySelector('[data-rejection-feedback]').value = '';
+            show(rejectionDialog);
+        });
+    });
+
     document.querySelectorAll('[data-close-dialog]').forEach((button) => {
         button.addEventListener('click', () => button.closest('dialog').close());
     });

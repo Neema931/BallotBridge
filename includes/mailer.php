@@ -59,6 +59,66 @@ function send_voter_review_email(
     return true;
 }
 
+function send_candidate_review_email(
+    string $email,
+    string $fullName,
+    string $electionTitle,
+    string $status,
+    string $rejectionFeedback = ''
+): bool
+{
+    if (!in_array($status, ['approved', 'rejected'], true)) {
+        error_log('Unable to send candidate review email because the review status is invalid.');
+        return false;
+    }
+
+    if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+        error_log('Unable to send candidate review email because the recipient address is invalid.');
+        return false;
+    }
+
+    if (filter_var(MAIL_FROM_ADDRESS, FILTER_VALIDATE_EMAIL) === false || !function_exists('mail')) {
+        error_log('Unable to send candidate review email because the mail configuration is invalid.');
+        return false;
+    }
+
+    $greetingName = preg_replace('/[\r\n\x00-\x1F\x7F]+/u', ' ', $fullName);
+    $safeElectionTitle = preg_replace('/[\r\n\x00-\x1F\x7F]+/u', ' ', $electionTitle);
+    if (!is_string($greetingName) || !is_string($safeElectionTitle)) {
+        throw new RuntimeException('Unable to format candidate details for email.');
+    }
+
+    if ($status === 'approved') {
+        $subject = 'Ballot Bridge candidacy approved';
+        $decisionMessage = "Your application for {$safeElectionTitle} has been approved and your profile is on the ballot.";
+        $nextStep = 'Sign in to review your candidate portal profile.';
+    } else {
+        $rejectionFeedback = trim($rejectionFeedback);
+        if ($rejectionFeedback === '' || strlen($rejectionFeedback) > 2000) {
+            error_log('Unable to send candidate rejection email because feedback is missing or too long.');
+            return false;
+        }
+
+        $subject = 'Ballot Bridge candidacy needs changes';
+        $decisionMessage = "Your application for {$safeElectionTitle} was not approved.";
+        $nextStep = "Administrator feedback:\n{$rejectionFeedback}\n\nSign in to review the feedback and update your application.";
+    }
+
+    $message = "Hello {$greetingName},\n\n{$decisionMessage}\n\n{$nextStep}\n\nBallot Bridge";
+    $headers = [
+        'From: Ballot Bridge <' . MAIL_FROM_ADDRESS . '>',
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset=UTF-8',
+    ];
+
+    if (!mail($email, $subject, $message, implode("\r\n", $headers))) {
+        error_log('The PHP mail transport rejected a candidate review email.');
+        return false;
+    }
+
+    return true;
+}
+
 function send_voter_password_setup_email(string $email, string $fullName, string $token): bool
 {
     if (

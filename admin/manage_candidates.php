@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/auth.php';
 require_role('admin');
 require_once __DIR__ . '/../includes/csrf.php';
 require_once __DIR__ . '/../includes/audit.php';
+require_once __DIR__ . '/../includes/mailer.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/election_time.php';
 require_once __DIR__ . '/../includes/election_scheduler.php';
@@ -119,9 +120,14 @@ function ballot_builder_delete_photo(?string $path): void
     }
 }
 
-function ballot_builder_redirect(int $electionId): void
+function ballot_builder_redirect(int $electionId, ?string $tab = null): void
 {
-    redirect(BASE_URL . '/admin/manage_candidates.php?election_id=' . $electionId);
+    $url = BASE_URL . '/admin/manage_candidates.php?election_id=' . $electionId;
+    if (in_array($tab, ['pending', 'approved', 'rejected'], true)) {
+        $url .= '&tab=' . $tab;
+    }
+
+    redirect($url);
 }
 
 activate_due_auto_elections($pdo);
@@ -417,16 +423,23 @@ if (is_post()) {
 
         if ($action === 'review_candidate') {
             $decision = isset($_POST['decision']) && is_string($_POST['decision']) ? $_POST['decision'] : '';
+            $rejectionFeedback = isset($_POST['rejection_feedback']) && is_string($_POST['rejection_feedback'])
+                ? trim($_POST['rejection_feedback'])
+                : '';
+            $requiresFeedback = in_array($decision, ['reject', 'disqualify'], true);
+            $expectedCandidateStatus = $decision === 'disqualify' ? 'approved' : 'pending';
             if ($entryId === null || $position['contest_type'] !== 'candidate'
-                || !in_array($decision, ['approve', 'reject'], true)) {
+                || !in_array($decision, ['approve', 'reject', 'disqualify'], true)) {
                 $pdo->rollBack();
                 set_flash('error', 'That candidate review action is invalid.');
                 ballot_builder_redirect($electionId);
             }
             $review = $pdo->prepare(
-                'SELECT c.user_id, c.status, u.status AS user_status
+                'SELECT c.user_id, c.status, c.rejection_feedback,
+                        u.status AS user_status, u.full_name, u.email, e.title AS election_title
                  FROM candidates c
                  INNER JOIN users u ON u.id = c.user_id
+                 INNER JOIN elections e ON e.id = c.election_id
                  WHERE c.id = :id AND c.election_id = :election_id
                    AND c.position_id = :position_id FOR UPDATE'
             );
@@ -435,38 +448,78 @@ if (is_post()) {
             if (
                 !$candidate
                 || $candidate['user_id'] === null
-                || $candidate['status'] !== 'pending'
+                || $candidate['status'] !== $expectedCandidateStatus
+                || ($requiresFeedback && (
+                    $rejectionFeedback === ''
+                    || strlen($rejectionFeedback) > 2000
+                ))
             ) {
                 $pdo->rollBack();
-                set_flash('error', 'Only registered candidate accounts can be reviewed.');
+                set_flash('error', 'The candidate status changed, or the requested decision requires feedback of at most 2,000 characters.');
                 ballot_builder_redirect($electionId);
             }
             $status = $decision === 'approve' ? 'approved' : 'rejected';
+            $userStatus = $candidate['user_status'] === 'suspended' ? 'suspended' : 'active';
             $review->closeCursor();
-            $updateCandidate = $pdo->prepare('UPDATE candidates SET status = :status WHERE id = :id');
-            $updateCandidate->execute(['status' => $status, 'id' => $entryId]);
+            $feedbackValue = $requiresFeedback ? $rejectionFeedback : null;
+            $updateCandidate = $pdo->prepare(
+                'UPDATE candidates
+                 SET status = :status, rejection_feedback = :rejection_feedback
+                 WHERE id = :id'
+            );
+            $updateCandidate->execute([
+                'status' => $status,
+                'rejection_feedback' => $feedbackValue,
+                'id' => $entryId,
+            ]);
             $updateUser = $pdo->prepare(
                 'UPDATE users SET status = :status WHERE id = :id AND role = \'candidate\''
             );
-            $updateUser->execute(['status' => $decision === 'approve' ? 'active' : 'rejected', 'id' => $candidate['user_id']]);
+            $updateUser->execute(['status' => $userStatus, 'id' => $candidate['user_id']]);
             log_admin_action(
                 $pdo,
-                $decision === 'approve' ? 'candidate.approved' : 'candidate.rejected',
+                match ($decision) {
+                    'approve' => 'candidate.approved',
+                    'disqualify' => 'candidate.disqualified',
+                    default => 'candidate.rejected',
+                },
                 'candidate',
                 $entryId,
-                $decision === 'approve' ? 'Approved candidate application.' : 'Rejected candidate application.',
+                match ($decision) {
+                    'approve' => 'Approved candidate application.',
+                    'disqualify' => 'Disqualified approved candidate.',
+                    default => 'Rejected candidate application.',
+                },
                 [
                     'candidate_status' => $candidate['status'],
                     'user_status' => $candidate['user_status'],
+                    'rejection_feedback' => $candidate['rejection_feedback'],
                 ],
                 [
                     'candidate_status' => $status,
-                    'user_status' => $decision === 'approve' ? 'active' : 'rejected',
+                    'user_status' => $userStatus,
+                    'rejection_feedback' => $feedbackValue,
                 ]
             );
             $pdo->commit();
-            set_flash('success', $decision === 'approve' ? 'Candidate approved.' : 'Candidate rejected.');
-            ballot_builder_redirect($electionId);
+            $emailSent = send_candidate_review_email(
+                $candidate['email'],
+                $candidate['full_name'],
+                $candidate['election_title'],
+                $status,
+                $feedbackValue ?? ''
+            );
+            set_flash(
+                $emailSent ? 'success' : 'error',
+                $emailSent
+                    ? match ($decision) {
+                        'approve' => 'Candidate approved and notified by email.',
+                        'disqualify' => 'Candidate disqualified and notified by email.',
+                        default => 'Candidate rejected and notified by email.',
+                    }
+                    : 'Candidate decision saved, but the notification email could not be sent. Please contact the candidate and check the mail transport.'
+            );
+            ballot_builder_redirect($electionId, $decision === 'approve' ? 'approved' : 'rejected');
         }
 
         $isOption = $action === 'save_option';
@@ -479,9 +532,12 @@ if (is_post()) {
         $manifesto = isset($_POST['manifesto']) && is_string($_POST['manifesto'])
             ? trim($_POST['manifesto'])
             : '';
-        if (strlen($manifesto) > 65535) {
+        $campaignSlogan = isset($_POST['campaign_slogan']) && is_string($_POST['campaign_slogan'])
+            ? trim($_POST['campaign_slogan'])
+            : '';
+        if (strlen($manifesto) > 65535 || strlen($campaignSlogan) > 200) {
             $pdo->rollBack();
-            set_flash('error', 'The entry description is too long.');
+            set_flash('error', 'The entry description or campaign slogan is too long.');
             ballot_builder_redirect($electionId);
         }
 
@@ -582,9 +638,9 @@ if (is_post()) {
                 $affiliation = isset($_POST['affiliation']) && is_string($_POST['affiliation'])
                     ? trim($_POST['affiliation'])
                     : '';
-                if (strlen($affiliation) > 150) {
+                if (strlen($affiliation) > 150 || strlen($campaignSlogan) > 200) {
                     $pdo->rollBack();
-                    set_flash('error', 'Affiliation must be 150 characters or fewer.');
+                    set_flash('error', 'Affiliation or campaign slogan exceeds its allowed length.');
                     ballot_builder_redirect($electionId);
                 }
                 $newPhoto = ballot_builder_store_photo($_FILES['photo'] ?? null);
@@ -595,14 +651,17 @@ if (is_post()) {
                 }
                 $saveEntry = $pdo->prepare(
                     'INSERT INTO candidates
-                     (user_id, election_id, position_id, manifesto, photo_path, affiliation, status)
-                     VALUES (:user_id, :election_id, :position_id, :manifesto, :photo_path, :affiliation, \'pending\')'
+                     (user_id, application_source, election_id, position_id, manifesto, campaign_slogan,
+                      photo_path, affiliation, status)
+                     VALUES (:user_id, \'admin\', :election_id, :position_id, :manifesto, :campaign_slogan,
+                             :photo_path, :affiliation, \'pending\')'
                 );
                 $saveEntry->execute([
                     'user_id' => $userId,
                     'election_id' => $electionId,
                     'position_id' => $positionId,
                     'manifesto' => $manifesto === '' ? null : $manifesto,
+                    'campaign_slogan' => $campaignSlogan === '' ? null : $campaignSlogan,
                     'photo_path' => $newPhoto,
                     'affiliation' => $affiliation === '' ? null : $affiliation,
                 ]);
@@ -619,13 +678,14 @@ if (is_post()) {
                         'election_id' => $electionId,
                         'position_id' => $positionId,
                         'manifesto' => $manifesto === '' ? null : $manifesto,
+                        'campaign_slogan' => $campaignSlogan === '' ? null : $campaignSlogan,
                         'affiliation' => $affiliation === '' ? null : $affiliation,
                         'status' => 'pending',
                     ]
                 );
             } else {
                 $profileQuery = $pdo->prepare(
-                    'SELECT photo_path, manifesto, affiliation FROM candidates
+                    'SELECT photo_path, manifesto, campaign_slogan, affiliation FROM candidates
                      WHERE id = :id AND user_id IS NOT NULL AND election_id = :election_id
                        AND position_id = :position_id FOR UPDATE'
                 );
@@ -643,9 +703,9 @@ if (is_post()) {
                 $affiliation = isset($_POST['affiliation']) && is_string($_POST['affiliation'])
                     ? trim($_POST['affiliation'])
                     : '';
-                if (strlen($affiliation) > 150) {
+                if (strlen($affiliation) > 150 || strlen($campaignSlogan) > 200) {
                     $pdo->rollBack();
-                    set_flash('error', 'Affiliation must be 150 characters or fewer.');
+                    set_flash('error', 'Affiliation or campaign slogan exceeds its allowed length.');
                     ballot_builder_redirect($electionId);
                 }
                 $newPhoto = ballot_builder_store_photo($_FILES['photo'] ?? null);
@@ -655,12 +715,14 @@ if (is_post()) {
                     ballot_builder_redirect($electionId);
                 }
                 $saveEntry = $pdo->prepare(
-                    'UPDATE candidates SET manifesto = :manifesto, affiliation = :affiliation,
+                    'UPDATE candidates SET manifesto = :manifesto, campaign_slogan = :campaign_slogan,
+                        affiliation = :affiliation,
                         photo_path = COALESCE(:photo_path, photo_path)
                      WHERE id = :id AND election_id = :election_id AND position_id = :position_id'
                 );
                 $saveEntry->execute([
                     'manifesto' => $manifesto === '' ? null : $manifesto,
+                    'campaign_slogan' => $campaignSlogan === '' ? null : $campaignSlogan,
                     'affiliation' => $affiliation === '' ? null : $affiliation,
                     'photo_path' => $newPhoto,
                     'id' => $entryId,
@@ -675,11 +737,13 @@ if (is_post()) {
                     'Updated candidate ballot profile.',
                     [
                         'manifesto' => $profile['manifesto'],
+                        'campaign_slogan' => $profile['campaign_slogan'],
                         'affiliation' => $profile['affiliation'],
                         'photo_path' => $profile['photo_path'],
                     ],
                     [
                         'manifesto' => $manifesto === '' ? null : $manifesto,
+                        'campaign_slogan' => $campaignSlogan === '' ? null : $campaignSlogan,
                         'affiliation' => $affiliation === '' ? null : $affiliation,
                         'photo_path' => $newPhoto ?? $profile['photo_path'],
                     ]
@@ -725,6 +789,10 @@ if ($selectedElection === null && $elections !== []) {
 
 $positions = [];
 $candidateAccounts = [];
+$pendingCandidates = [];
+$rejectedCandidates = [];
+$selfNominationCount = 0;
+$approvedBallotCount = 0;
 if ($selectedElection !== null) {
     $positionQuery = $pdo->prepare(
         'SELECT id, title, contest_type, max_votes, randomize_candidates
@@ -734,8 +802,9 @@ if ($selectedElection !== null) {
     $positions = $positionQuery->fetchAll();
 
     $entriesQuery = $pdo->prepare(
-        'SELECT c.id, c.user_id, c.display_name, c.position_id, c.manifesto, c.photo_path,
-                c.affiliation, c.status, u.full_name, u.email
+        'SELECT c.id, c.user_id, c.application_source, c.display_name, c.position_id,
+                c.manifesto, c.campaign_slogan, c.rejection_feedback, c.photo_path,
+                c.affiliation, c.status, u.full_name, u.email, u.reg_number
          FROM candidates c
          LEFT JOIN users u ON u.id = c.user_id
          WHERE c.election_id = :election_id
@@ -747,7 +816,24 @@ if ($selectedElection !== null) {
         $entriesByPosition[(int) $entry['position_id']][] = $entry;
     }
     foreach ($positions as &$positionRow) {
-        $positionRow['entries'] = $entriesByPosition[(int) $positionRow['id']] ?? [];
+        $positionEntries = $entriesByPosition[(int) $positionRow['id']] ?? [];
+        $approvedEntries = [];
+        foreach ($positionEntries as $entry) {
+            $entry['position_title'] = $positionRow['title'];
+            if ($entry['user_id'] !== null && $entry['status'] === 'pending') {
+                $pendingCandidates[] = $entry;
+                if ($entry['application_source'] === 'self_registration') {
+                    $selfNominationCount++;
+                }
+            } elseif ($entry['user_id'] !== null && $entry['status'] === 'rejected') {
+                $rejectedCandidates[] = $entry;
+            } else {
+                $approvedEntries[] = $entry;
+                $approvedBallotCount++;
+            }
+        }
+        $positionRow['entries'] = $positionEntries;
+        $positionRow['approved_entries'] = $approvedEntries;
     }
     unset($positionRow);
 
@@ -758,6 +844,10 @@ if ($selectedElection !== null) {
     )->fetchAll();
 }
 
+$activeTab = isset($_GET['tab']) && is_string($_GET['tab'])
+    && in_array($_GET['tab'], ['pending', 'approved', 'rejected'], true)
+    ? $_GET['tab']
+    : ($pendingCandidates !== [] ? 'pending' : 'approved');
 $isLocked = $selectedElection !== null && ballot_builder_election_is_locked($selectedElection);
 $statusLabels = [
     'draft' => 'Draft',
@@ -829,7 +919,206 @@ require __DIR__ . '/../includes/header.php';
             </aside>
         <?php endif; ?>
 
-        <?php if ($positions === []): ?>
+        <nav class="ballot-review-tabs" aria-label="Candidate status filters">
+            <?php foreach ([
+                'pending' => 'Pending Approval',
+                'approved' => 'Approved Ballot',
+                'rejected' => 'Rejected',
+            ] as $tabKey => $tabLabel): ?>
+                <?php
+                $tabCount = match ($tabKey) {
+                    'pending' => $selfNominationCount,
+                    'approved' => $approvedBallotCount,
+                    default => count($rejectedCandidates),
+                };
+                ?>
+                <a class="ballot-review-tabs__link<?= $activeTab === $tabKey ? ' is-active' : '' ?>"
+                    href="<?= BASE_URL ?>/admin/manage_candidates.php?election_id=<?= (int) $selectedElection['id'] ?>&amp;tab=<?= sanitize($tabKey) ?>"
+                    <?= $activeTab === $tabKey ? 'aria-current="page"' : '' ?>>
+                    <span><?= sanitize($tabLabel) ?></span>
+                    <span class="ballot-review-tabs__count<?= $tabKey === 'pending' && $selfNominationCount > 0 ? ' ballot-review-tabs__count--pending' : '' ?>">
+                        <?= $tabCount ?>
+                    </span>
+                </a>
+            <?php endforeach; ?>
+        </nav>
+
+        <?php if ($activeTab === 'pending'): ?>
+            <?php if ($pendingCandidates === []): ?>
+                <section class="card ballot-builder__empty">
+                    <div class="ballot-builder__empty-mark" aria-hidden="true">✓</div>
+                    <h2>No candidates are awaiting approval</h2>
+                    <p>New self-nominations and manually assigned candidate accounts will appear here for review.</p>
+                </section>
+            <?php else: ?>
+                <section class="card candidate-review-queue" aria-labelledby="candidate-review-title">
+                    <div class="candidate-review-queue__header">
+                        <div>
+                            <h2 id="candidate-review-title">Candidate vetting queue</h2>
+                            <p><?= count($pendingCandidates) ?> application<?= count($pendingCandidates) === 1 ? '' : 's' ?> awaiting review</p>
+                        </div>
+                        <span class="badge badge--pending"><?= $selfNominationCount ?> new self-nomination<?= $selfNominationCount === 1 ? '' : 's' ?></span>
+                    </div>
+                    <div class="candidate-review-table__scroll">
+                        <table class="candidate-review-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Applicant</th>
+                                    <th scope="col">ID number</th>
+                                    <th scope="col">Position</th>
+                                    <th scope="col">Party / slate</th>
+                                    <th scope="col">Manifesto</th>
+                                    <th scope="col">Review</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($pendingCandidates as $entry): ?>
+                                    <?php
+                                    $entryName = (string) $entry['full_name'];
+                                    $photoIsValid = is_string($entry['photo_path'])
+                                        && preg_match('~\Aassets/img/candidates/[a-f0-9]{32}\.(?:jpg|png|webp)\z~', $entry['photo_path']) === 1;
+                                    ?>
+                                    <tr>
+                                        <td>
+                                            <div class="candidate-review-table__applicant">
+                                                <?php if ($photoIsValid): ?>
+                                                    <img class="candidate-review-table__photo"
+                                                        src="<?= BASE_URL ?>/<?= sanitize($entry['photo_path']) ?>"
+                                                        alt="">
+                                                <?php else: ?>
+                                                    <span class="candidate-review-table__photo candidate-review-table__photo--empty"
+                                                        aria-hidden="true"><?= sanitize(strtoupper(substr($entryName, 0, 1))) ?></span>
+                                                <?php endif; ?>
+                                                <span>
+                                                    <strong><?= sanitize($entryName) ?></strong>
+                                                    <small><?= $entry['application_source'] === 'self_registration' ? 'Self-nomination' : 'Admin-assigned' ?></small>
+                                                </span>
+                                            </div>
+                                        </td>
+                                        <td><?= sanitize((string) ($entry['reg_number'] ?? '—')) ?></td>
+                                        <td><?= sanitize($entry['position_title']) ?></td>
+                                        <td><?= sanitize((string) ($entry['affiliation'] ?: '—')) ?></td>
+                                        <td>
+                                            <?php if (is_string($entry['manifesto']) && trim($entry['manifesto']) !== ''): ?>
+                                                <button class="button button--small button--outline" type="button"
+                                                    data-read-manifesto
+                                                    data-candidate-name="<?= sanitize($entryName) ?>"
+                                                    data-position-title="<?= sanitize($entry['position_title']) ?>"
+                                                    data-manifesto="<?= sanitize($entry['manifesto']) ?>">
+                                                    Read Manifesto
+                                                </button>
+                                            <?php else: ?>
+                                                <span class="form__hint">Not provided</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <div class="candidate-review-table__actions">
+                                                <form method="post">
+                                                    <?= csrf_field() ?>
+                                                    <input type="hidden" name="action" value="review_candidate">
+                                                    <input type="hidden" name="election_id" value="<?= (int) $selectedElection['id'] ?>">
+                                                    <input type="hidden" name="position_id" value="<?= (int) $entry['position_id'] ?>">
+                                                    <input type="hidden" name="candidate_id" value="<?= (int) $entry['id'] ?>">
+                                                    <input type="hidden" name="decision" value="approve">
+                                                    <button class="button button--small candidate-review-button candidate-review-button--approve"
+                                                        type="submit" <?= $isLocked ? 'disabled' : '' ?>
+                                                        aria-label="Approve <?= sanitize($entryName) ?>">
+                                                        <span aria-hidden="true">✓</span> Approve
+                                                    </button>
+                                                </form>
+                                                <button class="button button--small candidate-review-button candidate-review-button--reject"
+                                                    type="button" data-open-rejection
+                                                    data-decision="reject"
+                                                    data-entry-id="<?= (int) $entry['id'] ?>"
+                                                    data-position-id="<?= (int) $entry['position_id'] ?>"
+                                                    data-candidate-name="<?= sanitize($entryName) ?>"
+                                                    <?= $isLocked ? 'disabled' : '' ?>>
+                                                    <span aria-hidden="true">×</span> Reject
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            <?php endif; ?>
+        <?php elseif ($activeTab === 'rejected'): ?>
+            <?php if ($rejectedCandidates === []): ?>
+                <section class="card ballot-builder__empty">
+                    <div class="ballot-builder__empty-mark" aria-hidden="true">—</div>
+                    <h2>No rejected applications</h2>
+                    <p>Rejected candidate applications for this election will appear here.</p>
+                </section>
+            <?php else: ?>
+                <section class="card candidate-review-queue" aria-labelledby="rejected-candidates-title">
+                    <div class="candidate-review-queue__header">
+                        <div>
+                            <h2 id="rejected-candidates-title">Rejected applications</h2>
+                            <p>Review the feedback sent to each applicant.</p>
+                        </div>
+                    </div>
+                    <div class="candidate-review-table__scroll">
+                        <table class="candidate-review-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Applicant</th>
+                                    <th scope="col">ID number</th>
+                                    <th scope="col">Position</th>
+                                    <th scope="col">Party / slate</th>
+                                    <th scope="col">Feedback</th>
+                                    <th scope="col">Manifesto</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($rejectedCandidates as $entry): ?>
+                                    <?php
+                                    $entryName = (string) $entry['full_name'];
+                                    $photoIsValid = is_string($entry['photo_path'])
+                                        && preg_match('~\Aassets/img/candidates/[a-f0-9]{32}\.(?:jpg|png|webp)\z~', $entry['photo_path']) === 1;
+                                    ?>
+                                    <tr>
+                                        <td>
+                                            <div class="candidate-review-table__applicant">
+                                                <?php if ($photoIsValid): ?>
+                                                    <img class="candidate-review-table__photo"
+                                                        src="<?= BASE_URL ?>/<?= sanitize($entry['photo_path']) ?>"
+                                                        alt="">
+                                                <?php else: ?>
+                                                    <span class="candidate-review-table__photo candidate-review-table__photo--empty"
+                                                        aria-hidden="true"><?= sanitize(strtoupper(substr($entryName, 0, 1))) ?></span>
+                                                <?php endif; ?>
+                                                <strong><?= sanitize($entryName) ?></strong>
+                                            </div>
+                                        </td>
+                                        <td><?= sanitize((string) ($entry['reg_number'] ?? '—')) ?></td>
+                                        <td><?= sanitize($entry['position_title']) ?></td>
+                                        <td><?= sanitize((string) ($entry['affiliation'] ?: '—')) ?></td>
+                                        <td class="candidate-review-table__feedback">
+                                            <?= nl2br(sanitize((string) ($entry['rejection_feedback'] ?? ''))) ?>
+                                        </td>
+                                        <td>
+                                            <?php if (is_string($entry['manifesto']) && trim($entry['manifesto']) !== ''): ?>
+                                                <button class="button button--small button--outline" type="button"
+                                                    data-read-manifesto
+                                                    data-candidate-name="<?= sanitize($entryName) ?>"
+                                                    data-position-title="<?= sanitize($entry['position_title']) ?>"
+                                                    data-manifesto="<?= sanitize($entry['manifesto']) ?>">
+                                                    Read Manifesto
+                                                </button>
+                                            <?php else: ?>
+                                                <span class="form__hint">Not provided</span>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            <?php endif; ?>
+        <?php elseif ($positions === []): ?>
             <section class="card ballot-builder__empty">
                 <div class="ballot-builder__empty-mark" aria-hidden="true">01</div>
                 <h2>Your ballot is ready to take shape</h2>
@@ -840,7 +1129,7 @@ require __DIR__ . '/../includes/header.php';
         <?php else: ?>
             <div class="ballot-builder__positions">
                 <?php foreach ($positions as $position): ?>
-                    <?php $entries = $position['entries']; ?>
+                    <?php $entries = $position['approved_entries']; ?>
                     <details class="ballot-position" open>
                         <summary class="ballot-position__summary">
                             <span class="ballot-position__heading">
@@ -920,6 +1209,9 @@ require __DIR__ . '/../includes/header.php';
                                                 <?php elseif (is_string($entry['email']) && $entry['email'] !== ''): ?>
                                                     <p class="candidate-builder-card__affiliation"><?= sanitize($entry['email']) ?></p>
                                                 <?php endif; ?>
+                                                <?php if (is_string($entry['campaign_slogan']) && $entry['campaign_slogan'] !== ''): ?>
+                                                    <p><?= sanitize($entry['campaign_slogan']) ?></p>
+                                                <?php endif; ?>
                                                 <?php if (is_string($entry['manifesto']) && $entry['manifesto'] !== ''): ?>
                                                     <p class="candidate-builder-card__manifesto"><?= sanitize($entry['manifesto']) ?></p>
                                                 <?php endif; ?>
@@ -930,31 +1222,30 @@ require __DIR__ . '/../includes/header.php';
                                                         data-position-id="<?= (int) $position['id'] ?>"
                                                         data-name="<?= sanitize($entryName) ?>"
                                                         data-affiliation="<?= sanitize((string) ($entry['affiliation'] ?? '')) ?>"
+                                                        data-campaign-slogan="<?= sanitize((string) ($entry['campaign_slogan'] ?? '')) ?>"
                                                         data-manifesto="<?= sanitize((string) ($entry['manifesto'] ?? '')) ?>"
                                                         <?= $isLocked ? 'disabled' : '' ?>>Edit</button>
-                                                    <?php if ($entry['user_id'] !== null && $entry['status'] === 'pending'): ?>
-                                                        <?php foreach (['approve' => 'Approve', 'reject' => 'Reject'] as $decision => $label): ?>
-                                                            <form method="post">
+                                                        <?php if ($entry['user_id'] !== null): ?>
+                                                            <button class="button button--small candidate-review-button candidate-review-button--reject"
+                                                                type="button" data-open-rejection
+                                                                data-decision="disqualify"
+                                                                data-entry-id="<?= (int) $entry['id'] ?>"
+                                                                data-position-id="<?= (int) $position['id'] ?>"
+                                                                data-candidate-name="<?= sanitize($entryName) ?>"
+                                                                <?= $isLocked ? 'disabled' : '' ?>>
+                                                                Disqualify
+                                                            </button>
+                                                        <?php else: ?>
+                                                            <form method="post" onsubmit="return confirm('Remove this ballot option?');">
                                                                 <?= csrf_field() ?>
-                                                                <input type="hidden" name="action" value="review_candidate">
+                                                                <input type="hidden" name="action" value="delete_entry">
                                                                 <input type="hidden" name="election_id" value="<?= (int) $selectedElection['id'] ?>">
                                                                 <input type="hidden" name="position_id" value="<?= (int) $position['id'] ?>">
                                                                 <input type="hidden" name="candidate_id" value="<?= (int) $entry['id'] ?>">
-                                                                <input type="hidden" name="decision" value="<?= sanitize($decision) ?>">
-                                                                <button class="button button--small <?= $decision === 'approve' ? 'button--primary' : 'button--outline' ?>"
-                                                                    type="submit" <?= $isLocked ? 'disabled' : '' ?>><?= sanitize($label) ?></button>
+                                                                <button class="button button--small button--outline" type="submit"
+                                                                    <?= $isLocked ? 'disabled' : '' ?>>Remove</button>
                                                             </form>
-                                                        <?php endforeach; ?>
-                                                    <?php endif; ?>
-                                                    <form method="post" onsubmit="return confirm('Remove this entry from the ballot?');">
-                                                        <?= csrf_field() ?>
-                                                        <input type="hidden" name="action" value="delete_entry">
-                                                        <input type="hidden" name="election_id" value="<?= (int) $selectedElection['id'] ?>">
-                                                        <input type="hidden" name="position_id" value="<?= (int) $position['id'] ?>">
-                                                        <input type="hidden" name="candidate_id" value="<?= (int) $entry['id'] ?>">
-                                                        <button class="button button--small button--outline" type="submit"
-                                                            <?= $isLocked ? 'disabled' : '' ?>>Remove</button>
-                                                    </form>
+                                                        <?php endif; ?>
                                                 </div>
                                             </div>
                                         </article>
@@ -966,7 +1257,7 @@ require __DIR__ . '/../includes/header.php';
                                 data-position-id="<?= (int) $position['id'] ?>"
                                 data-position-title="<?= sanitize($position['title']) ?>"
                                 <?= $isLocked ? 'disabled' : '' ?>>
-                                + Add <?= $position['contest_type'] === 'referendum' ? 'Referendum Option' : 'Candidate to ' . sanitize($position['title']) ?>
+                                <?= $position['contest_type'] === 'referendum' ? '+ Add Referendum Option' : '+ Add Candidate Manually' ?>
                             </button>
                         </div>
                     </details>
@@ -1031,6 +1322,8 @@ require __DIR__ . '/../includes/header.php';
         <div data-candidate-fields>
             <label for="candidate-affiliation">Party or slate affiliation</label>
             <input id="candidate-affiliation" name="affiliation" maxlength="150">
+            <label for="candidate-slogan">Campaign slogan</label>
+            <input id="candidate-slogan" name="campaign_slogan" maxlength="200">
             <label for="candidate-photo">Profile photo (JPG or PNG; up to 2 MB)</label>
             <input id="candidate-photo" name="photo" type="file" accept="image/jpeg,image/png">
         </div>
@@ -1129,6 +1422,9 @@ require __DIR__ . '/../includes/header.php';
                                     <?php if (is_string($entry['affiliation']) && $entry['affiliation'] !== ''): ?>
                                         <small><?= sanitize($entry['affiliation']) ?></small>
                                     <?php endif; ?>
+                                    <?php if (is_string($entry['campaign_slogan']) && $entry['campaign_slogan'] !== ''): ?>
+                                        <small><?= sanitize($entry['campaign_slogan']) ?></small>
+                                    <?php endif; ?>
                                     <?php if (
                                         $entry['manifesto'] !== null
                                         && $entry['manifesto'] !== ''
@@ -1152,6 +1448,47 @@ require __DIR__ . '/../includes/header.php';
         <?php endforeach; ?>
     </div>
 </dialog>
+
+<dialog class="ballot-builder__dialog" id="manifesto-dialog" aria-labelledby="manifesto-dialog-title">
+    <div class="form-card ballot-builder__dialog-form">
+        <div class="ballot-builder__dialog-heading">
+            <div>
+                <p class="eyebrow" data-manifesto-position></p>
+                <h2 id="manifesto-dialog-title" data-manifesto-name>Candidate manifesto</h2>
+            </div>
+            <button type="button" class="button button--small button--outline" data-close-dialog>Close</button>
+        </div>
+        <div class="candidate-manifesto-dialog__content" data-manifesto-content></div>
+    </div>
+</dialog>
+
+<dialog class="ballot-builder__dialog" id="rejection-dialog" aria-labelledby="rejection-dialog-title">
+    <form method="post" class="form-card ballot-builder__dialog-form" data-rejection-form>
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="review_candidate">
+        <input type="hidden" name="election_id" value="<?= (int) $selectedElection['id'] ?>">
+        <input type="hidden" name="position_id" value="">
+        <input type="hidden" name="candidate_id" value="">
+        <input type="hidden" name="decision" value="reject">
+        <div class="ballot-builder__dialog-heading">
+            <div>
+                <p class="eyebrow">Candidate review</p>
+                <h2 id="rejection-dialog-title" data-rejection-title>Reject application</h2>
+            </div>
+            <button type="button" class="button button--small button--outline" data-close-dialog>Cancel</button>
+        </div>
+        <p data-rejection-candidate></p>
+        <label for="candidate-review-feedback">Feedback for the candidate <span>(required)</span></label>
+        <textarea id="candidate-review-feedback" name="rejection_feedback" maxlength="2000"
+            rows="5" placeholder="Explain what needs to be corrected" required
+            data-rejection-feedback></textarea>
+        <p class="form__hint">This feedback will be included in the decision email.</p>
+        <div class="ballot-builder__dialog-actions">
+            <button class="button button--primary" type="submit" data-rejection-submit>Confirm rejection</button>
+        </div>
+    </form>
+</dialog>
+
 <script src="<?= BASE_URL ?>/assets/js/ballot-builder.js" defer></script>
 <?php endif; ?>
 

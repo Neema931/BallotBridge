@@ -1,0 +1,307 @@
+.candidate-dashboard .container {
+    width: 100%;
+    max-width: none;
+    padding-inline: var(--space-4);
+}
+
+.candidate-dashboard__application-picker {
+    display: flex;
+    gap: var(--space-2);
+    overflow-x: auto;
+    margin-bottom: var(--space-4);
+    padding-bottom: var(--space-2);
+}
+
+.candidate-dashboard__application-picker a {
+    flex: 0 0 auto;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--black);
+    border-radius: var(--radius-md);
+    color: var(--black);
+    text-decoration: none;
+}
+
+.candidate-dashboard__application-picker a[aria-current="page"] {
+    background: var(--blue);
+    border-color: var(--blue);
+    color: var(--white);
+}
+
+.candidate-status-banner,
+.candidate-election-overview {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-5);
+    border: 1px solid var(--black);
+    border-radius: var(--radius-lg);
+    background: var(--white);
+}
+
+.candidate-status-banner {
+    margin-bottom: var(--space-4);
+}
+
+.candidate-status-banner h2,
+.candidate-election-overview h2,
+.candidate-dashboard-card__header h2 {
+    margin: 0;
+}
+
+.candidate-status-banner p {
+    margin: var(--space-2) 0 0;
+}
+
+.candidate-status-banner--pending {
+    border-left: 6px solid #a76700;
+}
+
+.candidate-status-banner--rejected {
+    border-left: 6px solid #b42318;
+}
+
+.candidate-status-banner--approved {
+    border-left: 6px solid #16803c;
+}
+
+.candidate-status-banner__feedback {
+    max-width: 70ch;
+    padding: var(--space-3);
+    border-radius: var(--radius-sm);
+    background: #fff3f2;
+}
+
+.candidate-election-overview {
+    flex-wrap: wrap;
+    margin-bottom: var(--space-5);
+    background: var(--blue);
+    color: var(--white);
+}
+
+.candidate-election-overview__identity {
+    flex: 1 1 18rem;
+}
+
+.candidate-election-overview__identity p:last-child {
+    margin-bottom: 0;
+}
+
+.candidate-election-overview .eyebrow {
+    opacity: 0.8;
+}
+
+.candidate-election-status {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    font-weight: 700;
+}
+
+.candidate-election-status--live {
+    background: #16803c;
+}
+
+.candidate-election-status--scheduled {
+    background: #a76700;
+}
+
+.candidate-election-status--paused,
+.candidate-election-status--closed {
+    background: #b42318;
+}
+
+.candidate-countdown {
+    display: grid;
+    gap: var(--space-1);
+}
+
+.candidate-countdown strong {
+    font-size: 1.25rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.candidate-election-overview__schedule {
+    margin: 0;
+}
+
+.candidate-election-overview .btn {
+    border-color: var(--white);
+    background: transparent;
+    color: var(--white);
+}
+
+.candidate-election-overview .btn:hover,
+.candidate-election-overview .btn:focus-visible {
+    background: var(--white);
+    color: var(--blue);
+}
+
+.candidate-election-overview .btn:disabled {
+    opacity: 0.7;
+}
+
+.candidate-dashboard__columns {
+    display: grid;
+    gap: var(--space-4);
+}
+
+.candidate-ballot-preview,
+.candidate-campaign-checklist {
+    min-width: 0;
+    padding: var(--space-5);
+}
+
+.candidate-dashboard-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+}
+
+.candidate-dashboard-card__header .eyebrow {
+    margin: 0 0 var(--space-1);
+}
+
+.candidate-ballot-preview__candidate {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    border: 1px solid var(--black);
+    border-radius: var(--radius-md);
+}
+
+.candidate-ballot-preview__photo {
+    flex: 0 0 5rem;
+    width: 5rem;
+    height: 5rem;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.candidate-ballot-preview__photo--empty {
+    display: grid;
+    place-items: center;
+    background: var(--blue);
+    color: var(--white);
+    font-size: 1.75rem;
+    font-weight: 700;
+}
+
+.candidate-ballot-preview__details {
+    min-width: 0;
+}
+
+.candidate-ballot-preview__details h3 {
+    margin: 0;
+}
+
+.candidate-ballot-preview__details p {
+    margin: var(--space-2) 0 0;
+}
+
+.candidate-ballot-preview__affiliation {
+    font-weight: 700;
+}
+
+.candidate-ballot-preview__slogan {
+    color: var(--blue);
+    font-weight: 700;
+}
+
+.candidate-ballot-preview__manifesto {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 5;
+}
+
+.candidate-milestones {
+    display: grid;
+    gap: var(--space-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.candidate-milestones li {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+}
+
+.candidate-milestones li > div {
+    display: grid;
+    gap: var(--space-1);
+}
+
+.candidate-milestones__marker {
+    flex: 0 0 0.75rem;
+    width: 0.75rem;
+    height: 0.75rem;
+    margin-top: 0.35rem;
+    border: 2px solid var(--blue);
+    border-radius: 50%;
+}
+
+.candidate-checklist__title {
+    margin: var(--space-5) 0 var(--space-2);
+}
+
+.candidate-checklist {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.candidate-checklist li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid #d5d5d5;
+}
+
+.candidate-checklist li > span,
+.candidate-checklist li.is-ready strong {
+    color: #16803c;
+}
+
+.candidate-checklist li > strong {
+    font-size: 0.875rem;
+}
+
+.candidate-dashboard__empty {
+    padding: var(--space-6);
+}
+
+.candidate-dashboard :focus-visible {
+    outline: 3px solid var(--blue);
+    outline-offset: 3px;
+}
+
+@media (min-width: 600px) {
+    .candidate-dashboard .container {
+        padding-inline: var(--space-5);
+    }
+
+    .candidate-status-banner,
+    .candidate-election-overview {
+        padding: var(--space-6);
+    }
+}
+
+@media (min-width: 900px) {
+    .candidate-dashboard__columns {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        align-items: start;
+    }
+}
