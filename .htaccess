@@ -1,0 +1,2 @@
+ErrorDocument 403 /BallotBridge/errors/403.php
+ErrorDocument 404 /BallotBridge/errors/404.php
