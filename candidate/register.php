@@ -258,13 +258,15 @@ foreach ($unconfiguredElectionsQuery->fetchAll() as $election) {
 
 $canApply = $positions !== [];
 $pageTitle = 'Candidate registration';
+$hideSiteNavigation = true;
+$hideFooter = true;
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
 <section class="section candidate-register">
     <div class="container">
         <header class="candidate-register__header">
-            <h1 font color = "#0096ff" >Candidate Registration</h1>
+            <h1>Candidate Registration</h1>
             <?php if ($canApply): ?>
                 <p>
                     Apply for <?= count($eligibleElectionTitles) === 1

@@ -30,6 +30,8 @@
     background: var(--white);
     color: var(--black);
     cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .password-toggle svg {
@@ -44,6 +46,22 @@
 
 .password-toggle svg[hidden] {
     display: none;
+}
+
+.password-toggle.is-toggling {
+    animation: password-eye-blink 180ms ease-in-out;
+}
+
+@keyframes password-eye-blink {
+    0% {
+        transform: translateY(-50%) scale(1);
+    }
+    50% {
+        transform: translateY(-50%) scaleX(0.75) scaleY(0.55);
+    }
+    100% {
+        transform: translateY(-50%) scale(1);
+    }
 }
 
 .password-toggle:focus-visible {
@@ -218,7 +236,7 @@ textarea.is-valid {
 .auth-login__welcome h1 {
     max-width: 12ch;
     margin: 0;
-    font-size: clamp(2rem, 7vw, 3rem);
+    font-size: 22px;
     line-height: 1.05;
 }
 

@@ -7,6 +7,6 @@
             </div>
         </footer>
     <?php endif; ?>
-    <script src="<?= BASE_URL ?>/assets/js/main.js?v=4" defer></script>
+    <script src="<?= BASE_URL ?>/assets/js/main.js?v=9" defer></script>
 </body>
 </html>

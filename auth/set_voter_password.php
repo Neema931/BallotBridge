@@ -93,6 +93,8 @@ if (is_post()) {
 }
 
 $pageTitle = 'Set voter password';
+$hideSiteNavigation = true;
+$hideFooter = true;
 require_once __DIR__ . '/../includes/header.php';
 ?>
 

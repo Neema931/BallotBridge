@@ -19,28 +19,38 @@ document.querySelectorAll("[data-print-page]").forEach((button) => {
     button.addEventListener("click", () => window.print());
 });
 
-const passwordToggleIcons = `
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-password-toggle-show hidden>
+const eyeIcon = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-password-eye="open">
         <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/>
         <circle cx="12" cy="12" r="3"/>
-    </svg>
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-password-toggle-hide>
-        <path d="M3 3 21 21M10.6 5.2A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a15 15 0 0 1-3.1 3.8M6.2 6.2C3.5 8.1 2 12 2 12s3.6 7 10 7a10.7 10.7 0 0 0 3-.4"/>
+    </svg>`;
+
+const eyeOffIcon = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-password-eye="closed">
+        <path d="M3 3l18 18"/>
+        <path d="M10.6 5.2A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a15 15 0 0 1-3.1 3.8"/>
+        <path d="M6.2 6.2C3.5 8.1 2 12 2 12s3.6 7 10 7a10.7 10.7 0 0 0 3-.4"/>
         <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
     </svg>`;
 
 let generatedPasswordId = 0;
-document.querySelectorAll('input[type="password"]').forEach((input) => {
-    const existingWrapper = input.closest(".password-field");
-    const hasMatchingToggle = existingWrapper
-        && [...existingWrapper.querySelectorAll("[data-password-toggle]")]
-            .some((toggle) => toggle.getAttribute("aria-controls") === input.id);
-    if (hasMatchingToggle) {
+const updatePasswordToggle = (toggle, input) => {
+    const isVisible = input.type === "text";
+
+    toggle.setAttribute("aria-pressed", String(isVisible));
+    toggle.setAttribute("aria-label", isVisible ? "Hide password" : "Show password");
+    toggle.title = isVisible ? "Hide password" : "Show password";
+    toggle.innerHTML = isVisible ? eyeIcon : eyeOffIcon;
+};
+
+const preparePasswordField = (input) => {
+    if (!(input instanceof HTMLInputElement) || input.type !== "password") {
         return;
     }
 
-    const wrapper = existingWrapper ?? document.createElement("div");
-    if (!existingWrapper) {
+    let wrapper = input.closest(".password-field");
+    if (!wrapper) {
+        wrapper = document.createElement("div");
         wrapper.className = "password-field";
         input.before(wrapper);
         wrapper.append(input);
@@ -53,40 +63,41 @@ document.querySelectorAll('input[type="password"]').forEach((input) => {
         } while (document.getElementById(input.id) !== input);
     }
 
-    const toggle = document.createElement("button");
-    toggle.className = "password-toggle";
-    toggle.type = "button";
-    toggle.setAttribute("aria-controls", input.id);
-    toggle.setAttribute("aria-label", "Show password");
-    toggle.setAttribute("aria-pressed", "false");
-    toggle.setAttribute("data-password-toggle", "");
-    toggle.innerHTML = passwordToggleIcons;
-    wrapper.append(toggle);
-});
+    let toggle = [...wrapper.querySelectorAll("[data-password-toggle]")]
+        .find((candidate) => candidate.getAttribute("aria-controls") === input.id);
 
-document.querySelectorAll("[data-password-toggle]").forEach((toggle) => {
-    const inputId = toggle.getAttribute("aria-controls");
-    const input = inputId ? document.getElementById(inputId) : null;
-    if (!(input instanceof HTMLInputElement)) {
-        return;
+    if (!toggle) {
+        toggle = document.createElement("button");
+        toggle.className = "password-toggle";
+        toggle.type = "button";
+        toggle.setAttribute("aria-controls", input.id);
+        toggle.setAttribute("data-password-toggle", "");
+        wrapper.append(toggle);
     }
 
-    const showIcon = toggle.querySelector("[data-password-toggle-show]");
-    const hideIcon = toggle.querySelector("[data-password-toggle-hide]");
+    updatePasswordToggle(toggle, input);
 
-    toggle.addEventListener("click", () => {
-        const showPassword = input.type === "password";
-        input.type = showPassword ? "text" : "password";
-        toggle.setAttribute("aria-pressed", String(showPassword));
-        toggle.setAttribute("aria-label", showPassword ? "Hide password" : "Show password");
-        if (showIcon) {
-            showIcon.hidden = !showPassword;
-        }
-        if (hideIcon) {
-            hideIcon.hidden = showPassword;
-        }
+    if (toggle.dataset.passwordToggleBound === "true") {
+        return;
+    }
+    toggle.dataset.passwordToggleBound = "true";
+
+    toggle.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        input.type = input.type === "password" ? "text" : "password";
+        updatePasswordToggle(toggle, input);
+        toggle.classList.remove("is-toggling");
+        void toggle.offsetWidth;
+        toggle.classList.add("is-toggling");
+        window.setTimeout(() => toggle.classList.remove("is-toggling"), 180);
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
     });
-});
+};
+
+document.querySelectorAll('input[type="password"]').forEach(preparePasswordField);
 
 if (document.body.dataset.voterHeartbeat) {
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content");

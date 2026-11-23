@@ -4131,7 +4131,7 @@ body.site-body--admin[data-theme="dark"] ::selection {
 
 .candidate-login__header h1 {
     margin: var(--space-2) 0 0;
-    font-size: clamp(1.6rem, 6vw, 2rem);
+    font-size: 22px;
 }
 
 .candidate-login__header p {
@@ -4301,7 +4301,7 @@ body.site-body--admin[data-theme="dark"] ::selection {
 
 .voter-login__header h1 {
     margin: var(--space-2) 0 0;
-    font-size: clamp(1.6rem, 6vw, 2rem);
+    font-size: 22px;
 }
 
 .voter-login__header p {
@@ -5736,4 +5736,22 @@ body.site-body--admin[data-theme="dark"] ::selection {
         color: var(--black);
         overflow-wrap: anywhere;
     }
+}
+
+/* Consistent page-heading scale across all portals */
+h1 {
+    color: #000000 !important;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1.2;
+    text-transform: uppercase;
+}
+
+h2 {
+    font-size: clamp(1.25rem, 3vw, 1.5rem);
+}
+
+h3 {
+    font-size: 1.125rem;
 }

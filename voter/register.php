@@ -9,6 +9,8 @@ if (isset($_GET['submitted']) && is_string($_GET['submitted']) && $_GET['submitt
 $showConfirmation = is_string($registrationConfirmation);
 
 $pageTitle = 'Voter registration';
+$hideSiteNavigation = true;
+$hideFooter = true;
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
@@ -54,7 +56,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <?= csrf_field() ?>
 
                     <section class="voter-registration__group" aria-labelledby="voter-identity-title">
-                        <h2 id="voter-identity-title"> PersonalDetails</h2>
+                        <h2 id="voter-identity-title">Personal Details</h2>
                         <div class="form__group">
                             <label for="voter-full-name">Full name</label>
                             <input class="form__control" id="voter-full-name" name="full_name"
