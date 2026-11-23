@@ -889,7 +889,7 @@ require_once __DIR__ . '/../includes/header.php';
                                 value="<?= $editElection && is_string($editElection['nomination_deadline'])
                                     ? sanitize(str_replace(' ', 'T', substr($editElection['nomination_deadline'], 0, 16)))
                                     : '' ?>">
-                            <p class="form__hint">Must be on or before poll opening. Leave blank when nominations have no separate deadline.</p>
+                            <p class="form__hint">Must be on or before poll opening. Leave blank to keep nominations open through the Draft and scheduled phases, until polls begin; add a candidate position in Manage Candidates to accept applications.</p>
                         </div>
                     </div>
                     <div class="form__group">

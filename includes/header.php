@@ -60,18 +60,18 @@ foreach ($flashMessages as $flash) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#0000ff">
+    <meta name="theme-color" content="#0096ff">
     <?php if ($isVoter): ?>
         <meta name="csrf-token" content="<?= sanitize(csrf_token()) ?>">
     <?php endif; ?>
     <title><?= sanitize($pageTitle) ?> | <?= sanitize(APP_NAME) ?></title>
-    <link rel="icon" href="<?= BASE_URL ?>/assets/img/favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/variables.css">
+    <link rel="icon" href="<?= BASE_URL ?>/assets/img/favicon.svg?v=2" type="image/svg+xml">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/variables.css?v=2">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/base.css">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/layout.css">
     <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/components.css">
-    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/forms.css?v=1">
-    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/dashboard.css?v=24">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/forms.css?v=4">
+    <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/dashboard.css?v=31">
     <?php if (!empty($candidateDashboardStylesheet)): ?>
         <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/candidate-dashboard.css?v=1">
     <?php endif; ?>

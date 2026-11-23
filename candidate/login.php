@@ -55,11 +55,6 @@ require_once __DIR__ . '/../includes/header.php';
                 </a>
                 <h1>Candidate Portal Login</h1>
                 <p>Sign in to manage your application and campaign profile.</p>
-                <span class="candidate-login__cycle">
-                    <?= $electionCycle
-                        ? 'Election cycle · ' . sanitize($electionCycle['title'])
-                        : 'Secure candidate access' ?>
-                </span>
             </header>
 
             <?php if ($flashMessagesToDisplay !== [] || (isset($_GET['logged_out']) && $_GET['logged_out'] === '1')): ?>
@@ -129,7 +124,6 @@ require_once __DIR__ . '/../includes/header.php';
 
             <footer class="candidate-login__footer">
                 <p>New applicant? <a href="<?= BASE_URL ?>/candidate/register.php">Submit your candidacy here</a></p>
-                <a class="candidate-login__home" href="<?= BASE_URL ?>/index.php">Return to the home portal</a>
             </footer>
         </div>
     </div>

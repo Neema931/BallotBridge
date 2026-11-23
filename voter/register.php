@@ -54,14 +54,14 @@ require_once __DIR__ . '/../includes/header.php';
                     <?= csrf_field() ?>
 
                     <section class="voter-registration__group" aria-labelledby="voter-identity-title">
-                        <h2 id="voter-identity-title">Personal &amp; Identity Details</h2>
+                        <h2 id="voter-identity-title"> PersonalDetails</h2>
                         <div class="form__group">
-                            <label for="voter-full-name">Full legal name</label>
+                            <label for="voter-full-name">Full name</label>
                             <input class="form__control" id="voter-full-name" name="full_name"
                                 type="text" autocomplete="name" maxlength="150" required>
                         </div>
                         <div class="form__group">
-                            <label for="voter-reg-number">National ID / Student ID / Member Number</label>
+                            <label for="voter-reg-number">National ID / Student ID</label>
                             <input class="form__control" id="voter-reg-number" name="reg_number"
                                 type="text" autocomplete="off" maxlength="100" required
                                 aria-describedby="voter-id-hint">
@@ -74,7 +74,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <section class="voter-registration__group" aria-labelledby="voter-contact-title">
                         <h2 id="voter-contact-title">Contact Information</h2>
                         <div class="form__group">
-                            <label for="voter-email">Official email address</label>
+                            <label for="voter-email"> Email address</label>
                             <input class="form__control" id="voter-email" name="email" type="email"
                                 autocomplete="email" maxlength="254" required>
                             <p class="form__hint">Approval and rejection updates will be sent to this address.</p>
@@ -115,14 +115,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <p class="form__hint" id="voter-password-hint">
                                 Use at least 8 characters. A longer, unique passphrase is stronger.
                             </p>
-                            <div class="voter-registration__strength">
-                                <label id="voter-password-strength-label" for="voter-password-strength">
-                                    Password strength
-                                </label>
-                                <meter id="voter-password-strength" min="0" max="4" low="2"
-                                    high="3" optimum="4" value="0" data-password-strength></meter>
-                                <output data-password-strength-output aria-live="polite">Not entered</output>
-                            </div>
+                            
                         </div>
                         <div class="form__group">
                             <label for="voter-confirm-password">Confirm password</label>

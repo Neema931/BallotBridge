@@ -19,6 +19,51 @@ document.querySelectorAll("[data-print-page]").forEach((button) => {
     button.addEventListener("click", () => window.print());
 });
 
+const passwordToggleIcons = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-password-toggle-show hidden>
+        <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/>
+        <circle cx="12" cy="12" r="3"/>
+    </svg>
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-password-toggle-hide>
+        <path d="M3 3 21 21M10.6 5.2A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a15 15 0 0 1-3.1 3.8M6.2 6.2C3.5 8.1 2 12 2 12s3.6 7 10 7a10.7 10.7 0 0 0 3-.4"/>
+        <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+    </svg>`;
+
+let generatedPasswordId = 0;
+document.querySelectorAll('input[type="password"]').forEach((input) => {
+    const existingWrapper = input.closest(".password-field");
+    const hasMatchingToggle = existingWrapper
+        && [...existingWrapper.querySelectorAll("[data-password-toggle]")]
+            .some((toggle) => toggle.getAttribute("aria-controls") === input.id);
+    if (hasMatchingToggle) {
+        return;
+    }
+
+    const wrapper = existingWrapper ?? document.createElement("div");
+    if (!existingWrapper) {
+        wrapper.className = "password-field";
+        input.before(wrapper);
+        wrapper.append(input);
+    }
+
+    if (!input.id) {
+        do {
+            generatedPasswordId += 1;
+            input.id = `password-field-${generatedPasswordId}`;
+        } while (document.getElementById(input.id) !== input);
+    }
+
+    const toggle = document.createElement("button");
+    toggle.className = "password-toggle";
+    toggle.type = "button";
+    toggle.setAttribute("aria-controls", input.id);
+    toggle.setAttribute("aria-label", "Show password");
+    toggle.setAttribute("aria-pressed", "false");
+    toggle.setAttribute("data-password-toggle", "");
+    toggle.innerHTML = passwordToggleIcons;
+    wrapper.append(toggle);
+});
+
 document.querySelectorAll("[data-password-toggle]").forEach((toggle) => {
     const inputId = toggle.getAttribute("aria-controls");
     const input = inputId ? document.getElementById(inputId) : null;

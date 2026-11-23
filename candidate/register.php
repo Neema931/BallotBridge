@@ -15,6 +15,9 @@ function candidate_registration_is_open(array $election, ?DateTimeImmutable $now
     }
 
     $now = $now ?? new DateTimeImmutable('now', new DateTimeZone($timezone));
+    if ($now >= $start) {
+        return false;
+    }
     if ($election['status'] === 'open' && !election_is_upcoming($election, $now)) {
         return false;
     }
@@ -235,6 +238,24 @@ foreach ($positionsQuery->fetchAll() as $position) {
     $positions[] = $position;
 }
 
+$unconfiguredElectionsQuery = $pdo->query(
+    "SELECT e.status, e.start_datetime, e.end_datetime, e.timezone, e.nomination_deadline
+     FROM elections e
+     WHERE e.status IN ('draft', 'open')
+       AND NOT EXISTS (
+           SELECT 1
+           FROM positions p
+           WHERE p.election_id = e.id AND p.contest_type = 'candidate'
+       )"
+);
+$hasElectionAwaitingCandidatePosition = false;
+foreach ($unconfiguredElectionsQuery->fetchAll() as $election) {
+    if (candidate_registration_is_open($election)) {
+        $hasElectionAwaitingCandidatePosition = true;
+        break;
+    }
+}
+
 $canApply = $positions !== [];
 $pageTitle = 'Candidate registration';
 require_once __DIR__ . '/../includes/header.php';
@@ -243,8 +264,7 @@ require_once __DIR__ . '/../includes/header.php';
 <section class="section candidate-register">
     <div class="container">
         <header class="candidate-register__header">
-            <p class="eyebrow"><?= sanitize(APP_NAME) ?> · Candidate nominations</p>
-            <h1>Candidate Registration</h1>
+            <h1 font color = "#0096ff" >Candidate Registration</h1>
             <?php if ($canApply): ?>
                 <p>
                     Apply for <?= count($eligibleElectionTitles) === 1
@@ -252,7 +272,7 @@ require_once __DIR__ . '/../includes/header.php';
                         : sanitize((string) count($eligibleElectionTitles)) . ' elections accepting nominations' ?>.
                 </p>
             <?php else: ?>
-                <p>Self-nominations open when an election is accepting applications.</p>
+                <p>Self-nominations open automatically for Draft and scheduled elections once candidate positions are added.</p>
             <?php endif; ?>
         </header>
 
@@ -260,8 +280,16 @@ require_once __DIR__ . '/../includes/header.php';
             <div class="candidate-register__state candidate-register__state--closed" role="status">
                 <span class="candidate-register__state-icon" aria-hidden="true">!</span>
                 <div>
-                    <h2>Nominations Currently Closed</h2>
-                    <p>There are no Draft or scheduled elections accepting candidate applications right now. Please check back when nominations open.</p>
+                    <?php if ($hasElectionAwaitingCandidatePosition): ?>
+                        <h2>Add a candidate position to open nominations</h2>
+                        <p>
+                            An election is accepting nominations, but no candidate positions have been added yet.
+                            Nominations will open here automatically as soon as an administrator adds a candidate position.
+                        </p>
+                    <?php else: ?>
+                        <h2>Nominations Currently Closed</h2>
+                        <p>There are no Draft or scheduled elections accepting candidate applications right now. Please check back when nominations open.</p>
+                    <?php endif; ?>
                 </div>
             </div>
         <?php else: ?>
@@ -309,15 +337,47 @@ require_once __DIR__ . '/../includes/header.php';
                         </div>
                         <div class="form__group">
                             <label for="candidate-password">Password</label>
-                            <input id="candidate-password" name="password" type="password"
-                                data-password autocomplete="new-password" minlength="8" maxlength="72" required>
+                            <div class="password-field">
+                                <input id="candidate-password" name="password" type="password"
+                                    data-password autocomplete="new-password" minlength="8" maxlength="72" required>
+                                <button class="password-toggle" type="button"
+                                    aria-controls="candidate-password" aria-label="Show password"
+                                    aria-pressed="false" data-password-toggle>
+                                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"
+                                        data-password-toggle-show hidden>
+                                        <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"
+                                        data-password-toggle-hide>
+                                        <path d="M3 3 21 21M10.6 5.2A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a15 15 0 0 1-3.1 3.8M6.2 6.2C3.5 8.1 2 12 2 12s3.6 7 10 7a10.7 10.7 0 0 0 3-.4"/>
+                                        <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+                                    </svg>
+                                </button>
+                            </div>
                             <p class="form__hint">At least 8 characters and no more than 72 bytes.</p>
                         </div>
                         <div class="form__group">
                             <label for="candidate-confirm-password">Confirm password</label>
-                            <input id="candidate-confirm-password" name="confirm_password" type="password"
-                                data-password-confirm autocomplete="new-password" minlength="8" maxlength="72"
-                                aria-describedby="candidate-password-match" required>
+                            <div class="password-field">
+                                <input id="candidate-confirm-password" name="confirm_password" type="password"
+                                    data-password-confirm autocomplete="new-password" minlength="8" maxlength="72"
+                                    aria-describedby="candidate-password-match" required>
+                                <button class="password-toggle" type="button"
+                                    aria-controls="candidate-confirm-password" aria-label="Show password"
+                                    aria-pressed="false" data-password-toggle>
+                                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"
+                                        data-password-toggle-show hidden>
+                                        <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"
+                                        data-password-toggle-hide>
+                                        <path d="M3 3 21 21M10.6 5.2A10.7 10.7 0 0 1 12 5c6.4 0 10 7 10 7a15 15 0 0 0-3.1 3.8M6.2 6.2C3.5 8.1 2 12 2 12s3.6 7 10 7a10.7 10.7 0 0 0 3-.4"/>
+                                        <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>
+                                    </svg>
+                                </button>
+                            </div>
                             <p class="form__error" id="candidate-password-match" hidden>
                                 Passwords must match.
                             </p>
@@ -351,17 +411,14 @@ require_once __DIR__ . '/../includes/header.php';
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="form__group">
-                            <label for="candidate-affiliation">Party / slate affiliation <span>(optional)</span></label>
-                            <input id="candidate-affiliation" name="affiliation" type="text" maxlength="150">
-                        </div>
+                    
                         <div class="candidate-register__photo-field">
                             <div class="candidate-register__photo-frame">
                                 <span aria-hidden="true" data-registration-photo-placeholder>?</span>
                                 <img alt="Headshot preview" data-registration-photo-preview hidden>
                             </div>
                             <div class="form__group">
-                                <label for="candidate-photo">Headshot <span>(optional)</span></label>
+                                <label for="candidate-photo">Photo <span>(optional)</span></label>
                                 <input id="candidate-photo" name="photo" type="file"
                                     accept=".jpg,.jpeg,.png,image/jpeg,image/png"
                                     data-registration-photo>

@@ -96,7 +96,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <span><?= sanitize(APP_NAME) ?></span>
                 </a>
                 <h1>Voter Portal Sign In</h1>
-                <p>Sign in securely to check your eligibility and access the voter portal.</p>
+                
                 <div class="voter-login__phase" aria-label="Current election phase">
                     <span><?= sanitize($electionPhase) ?></span>
                     <?php if (is_string($phaseElectionTitle) && $phaseElectionTitle !== ''): ?>
@@ -117,7 +117,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <?php if ($voterLoginNotice === 'pending'): ?>
                         <div class="alert voter-login__alert--pending" role="status">
                             <strong>Account Pending Approval</strong>
-                            <p>Your registration is awaiting administrator review. You can sign in once it is approved.</p>
+                            <p>Your registration is awaiting review. You can sign in once it is approved.</p>
                         </div>
                     <?php elseif ($voterLoginNotice === 'rejected'): ?>
                         <div class="alert voter-login__alert--rejected" role="alert">
@@ -127,7 +127,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <?php elseif ($voterLoginNotice === 'registered'): ?>
                         <div class="alert voter-login__alert--success" role="status">
                             <strong>Registration submitted</strong>
-                            <p>Your account is pending administrator approval. Watch your email for a review update.</p>
+                            <p>Your account is pending approval. Watch your email for a review update.</p>
                         </div>
                     <?php endif; ?>
 
@@ -198,8 +198,7 @@ require_once __DIR__ . '/../includes/header.php';
 
             <footer class="voter-login__footer">
                 <p>Not yet registered? <a href="<?= BASE_URL ?>/voter/register.php">Register to vote here</a></p>
-                <a class="voter-login__home" href="<?= BASE_URL ?>/index.php">Return to the home portal</a>
-            </footer>
+    
         </div>
     </div>
 </section>

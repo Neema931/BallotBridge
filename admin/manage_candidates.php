@@ -913,6 +913,8 @@ require __DIR__ . '/../includes/header.php';
             </aside>
         <?php else: ?>
             <aside class="alert alert--info ballot-builder__lock" role="status">
+                Add at least one candidate position to accept self-nominations. Applications open automatically for Draft
+                and scheduled elections until poll opening, unless the optional nomination freeze deadline has passed.
                 Candidate contests use registered candidate accounts. Referendum choices follow the election-wide
                 <strong><?= sanitize(ucwords(str_replace('_', ' ', $selectedElection['voting_system']))) ?></strong>
                 voting system.
