@@ -61,7 +61,7 @@ require_once __DIR__ . '/../includes/header.php';
                                 type="text" autocomplete="name" maxlength="150" required>
                         </div>
                         <div class="form__group">
-                            <label for="voter-reg-number">National ID / Student ID</label>
+                            <label for="voter-reg-number">Student ID</label>
                             <input class="form__control" id="voter-reg-number" name="reg_number"
                                 type="text" autocomplete="off" maxlength="100" required
                                 aria-describedby="voter-id-hint">
